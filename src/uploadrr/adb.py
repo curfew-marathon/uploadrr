@@ -30,8 +30,11 @@ def verify_free_space(device, file_size):
 
 def push_file(serial, file):
     device = get_device(serial)
+
+    pre_work(device)
     file_size = os.stat(file).st_size
     verify_free_space(device, file_size)
+
     file_dest = DOWNLOAD + os.path.basename(file)
 
     logger.info("Device " + device.serial + " - Push " + file)
@@ -40,6 +43,16 @@ def push_file(serial, file):
     device.shell("tar -xf " + file_dest + " -C " + CAMERA)
     logger.info("Device " + device.serial + " - Remove the tar " + file_dest)
     device.shell("rm -f " + file_dest)
+    logger.info("Device " + device.serial + " - Start Google Photos")
+    post_work(device)
 
-    # TODO start photos?
+
+def post_work(device):
+    device.shell("input keyevent KEYCODE_WAKEUP")
+    device.shell("monkey -p com.google.android.apps.photos -c android.intent.category.LAUNCHER 1")
     # TODO clean activity?
+
+
+def pre_work(device):
+    logger.info("Device " + device.serial + " - Stop Google Photos")
+    device.shell("am force-stop com.google.android.apps.photos")
