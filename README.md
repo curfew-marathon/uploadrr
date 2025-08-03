@@ -125,10 +125,21 @@ This will list all connected devices with their serial numbers.
 7. **Cleanup**: Removes the tar file from both the device and the source system
 8. **App Launch**: Starts Google Photos to process the new media files
 
+## Error Handling and Recovery
+
+- **Failed Transfers**: Files that fail to process (due to storage issues, device unavailability, etc.) remain in the source directory
+- **Periodic Recovery**: Every 24 hours, the application performs a full directory scan to retry any failed files
+- **Storage Issues**: Automatically checks for sufficient free space before transfer
+- **Device Connectivity**: Handles ADB connection errors gracefully
+- **File Processing**: Continues processing other files if one fails
+- **Configuration Errors**: Provides clear error messages for missing devices or configuration
+
 ## File Processing Flow
 
 ```
 Archive Directory → File Monitor → Queue → ADB Transfer → Extract → Cleanup → Google Photos
+                     ↑                                        ↓
+              24-hour periodic scan ← ← ← ← ← Failed files remain
 ```
 
 ## Directory Structure
@@ -191,10 +202,13 @@ The application automatically reduces verbose logging from:
 
 ## Error Handling
 
+- **Failed Transfers**: Files that fail to process (due to storage issues, device unavailability, etc.) remain in the source directory for automatic retry
+- **Periodic Recovery**: Every 24 hours, the application performs a full directory scan to retry any failed files
 - **Storage Issues**: Automatically checks for sufficient free space before transfer
-- **Device Connectivity**: Handles ADB connection errors gracefully
+- **Device Connectivity**: Handles ADB connection errors gracefully  
 - **File Processing**: Continues processing other files if one fails
 - **Configuration Errors**: Provides clear error messages for missing devices or configuration
+- **Automatic Retry**: Failed files are automatically retried during the next 24-hour scan cycle
 
 ## Use Cases
 
