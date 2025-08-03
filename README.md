@@ -152,13 +152,42 @@ src/
 
 ## Logging
 
-The application provides detailed logging including:
-- File detection and processing status
-- ADB operations (push, extract, cleanup)
-- Device storage information
-- Error handling and recovery
+The application provides comprehensive logging with configurable levels:
 
-Logs are formatted with timestamps and can be configured through Python's logging system.
+### Log Levels
+- **DEBUG**: Detailed diagnostic information (file scanning, device connections, storage checks)
+- **INFO**: General operational information (file processing, transfers, startup/shutdown)
+- **WARNING**: Important events that may need attention (missing device configs, file type issues)
+- **ERROR**: Error conditions that prevent file processing
+
+### Configuration
+Set the logging level using the `LOG_LEVEL` environment variable:
+```bash
+# For production (default)
+export LOG_LEVEL=INFO
+python src/launch.py
+
+# For debugging
+export LOG_LEVEL=DEBUG
+python src/launch.py
+
+# Docker example
+docker run -e LOG_LEVEL=DEBUG curfewmarathon/uploadrr
+```
+
+### Log Format
+Logs include timestamps, logger names, levels, and structured messages:
+```
+2025-08-03 14:30:15 - uploadrr.files - INFO - Starting uploadrr - setting up file observers
+2025-08-03 14:30:16 - uploadrr.files - INFO - Processing new file: /data/personal/photos.tar
+2025-08-03 14:30:17 - uploadrr.adb - INFO - Starting transfer of /data/personal/photos.tar to device ABC123DEF456
+```
+
+### Noise Reduction
+The application automatically reduces verbose logging from:
+- **Watchdog internal events**: File system modification events are filtered to WARNING level
+- **Duplicate processing**: Files are debounced to prevent processing the same file multiple times
+- **Event spam**: Rapid file modification events are debounced with a 2-second window
 
 ## Error Handling
 
