@@ -20,3 +20,38 @@ def test_get_device_success(monkeypatch):
     monkeypatch.setattr("uploadrr.adb.CLIENT", mock_client)
     assert get_device("test_serial") == "mock_device"
     mock_client.device.assert_called_once_with("test_serial")
+
+
+def test_push_file_quotes_shell_arguments(monkeypatch):
+    from uploadrr.adb import push_file
+
+    mock_device = MagicMock()
+    mock_device.serial = "test_serial"
+    monkeypatch.setattr("uploadrr.adb.get_device", lambda s: mock_device)
+    monkeypatch.setattr("uploadrr.adb.pre_work", lambda d: None)
+    monkeypatch.setattr("uploadrr.adb.post_work", lambda d: None)
+    monkeypatch.setattr("uploadrr.adb.verify_free_space", lambda d, s: None)
+
+    # Mock os.stat and os.path.basename
+    class MockStat:
+        st_size = 100
+
+    monkeypatch.setattr("os.stat", lambda f: MockStat())
+    monkeypatch.setattr("os.path.basename", lambda f: 'file with spaces and "quotes".tar')
+
+    push_file("test_serial", "/fake/path/file with spaces and \"quotes\".tar")
+
+    # Check if shell was called with quoted arguments
+    import shlex
+    from uploadrr.constants import CAMERA, DOWNLOAD
+    expected_file_dest = DOWNLOAD + 'file with spaces and "quotes".tar'
+
+    calls = mock_device.shell.call_args_list
+    assert any(
+        f"tar -xf {shlex.quote(expected_file_dest)} -C {shlex.quote(CAMERA)}" in call[0][0]
+        for call in calls
+    )
+    assert any(
+        f"rm -f {shlex.quote(expected_file_dest)}" in call[0][0]
+        for call in calls
+    )

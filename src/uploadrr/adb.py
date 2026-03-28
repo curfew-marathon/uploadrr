@@ -1,5 +1,6 @@
 import logging
 import os
+import shlex
 
 from ppadb.client import Client as AdbClient
 
@@ -58,9 +59,9 @@ def push_file(serial, file):
     logger.info("Pushing file to device %s: %s -> %s", device.serial, file, file_dest)
     device.push(file, file_dest)
     logger.info("Extracting archive on device %s: %s", device.serial, file_dest)
-    device.shell("tar -xf " + file_dest + " -C " + CAMERA)
+    device.shell("tar -xf " + shlex.quote(file_dest) + " -C " + shlex.quote(CAMERA))
     logger.info("Cleaning up temporary file on device %s: %s", device.serial, file_dest)
-    device.shell("rm -f " + file_dest)
+    device.shell("rm -f " + shlex.quote(file_dest))
     logger.info("Launching Google Photos on device %s", device.serial)
     post_work(device)
     logger.info("Successfully completed transfer to device %s", device.serial)
