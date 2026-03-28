@@ -21,10 +21,16 @@ class Config:
             album_dir = os.path.join(self.album_root, section_name)
             import_value = parser[section_name]['import_dir'].split(',')
             serial = parser[section_name]['serial']
-            archive_dir = os.path.join(self.archive_root, section_name)
 
-            d = {'album': album_dir, 'archive': archive_dir, 'import': import_value, 'serial': serial}
-            self.data.append(d)
+            import_value = [iv.strip() for iv in import_value if iv.strip()]
+
+            # Use import directory as sub-path as specified in README
+            for iv in import_value:
+                archive_dir = os.path.join(self.archive_root, iv)
+                # Note: album dir isn't specified to have import_dir as a sub-path in README, but
+                # keep original logic for album directory just using section_name for backward compat
+                d = {'album': album_dir, 'archive': archive_dir, 'import': iv, 'serial': serial}
+                self.data.append(d)
 
     def get_album(self):
         return self.album_root
@@ -36,7 +42,7 @@ class Config:
         return self.data
 
     def get_serial(self, d):
-        for dict in self.data:
-            if d == dict.get('archive'):
-                return dict.get('serial')
+        for data_dict in self.data:
+            if d == data_dict.get('archive'):
+                return data_dict.get('serial')
         raise KeyError("No serial for " + d)
