@@ -1,0 +1,5 @@
+[lint]
+extend-ignore = ["E402"]
+
+[format]
+exclude = ["tests/test_adb.py"]
