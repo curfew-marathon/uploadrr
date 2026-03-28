@@ -27,11 +27,17 @@ def verify_free_space(device, file_size):
             free = int(n.split()[3]) * 1000
             # Buffer for tar file plus extraction plus extra
             required_space = file_size * 3
-            logger.debug("Device %s - Free space: %d bytes, Required: %d bytes", 
-                        device.serial, free, required_space)
+            logger.debug(
+                "Device %s - Free space: %d bytes, Required: %d bytes",
+                device.serial,
+                free,
+                required_space,
+            )
             if free < required_space:
-                raise IOError("Device %s - Insufficient free space (free: %d, required: %d)" % 
-                            (device.serial, free, required_space))
+                raise IOError(
+                    "Device %s - Insufficient free space (free: %d, required: %d)"
+                    % (device.serial, free, required_space)
+                )
             logger.debug("Device %s - Storage check passed", device.serial)
             return
 
@@ -64,7 +70,9 @@ def post_work(device):
     logger.debug("Waking device %s", device.serial)
     device.shell("input keyevent KEYCODE_WAKEUP")
     logger.debug("Starting Google Photos on device %s", device.serial)
-    device.shell("monkey -p com.google.android.apps.photos -c android.intent.category.LAUNCHER 1")
+    device.shell(
+        "monkey -p com.google.android.apps.photos -c android.intent.category.LAUNCHER 1"
+    )
     # TODO clean activity?
 
 

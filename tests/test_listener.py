@@ -1,8 +1,8 @@
-import pytest
 import time
 from queue import Queue
 from unittest.mock import MagicMock
 from uploadrr.listener import MonitorFolder
+
 
 def test_on_closed_tar():
     queue = Queue()
@@ -12,12 +12,14 @@ def test_on_closed_tar():
     assert queue.get() == "test.tar"
     assert "test.tar" in handler.processed_files
 
+
 def test_on_closed_non_tar():
     queue = Queue()
     handler = MonitorFolder(queue)
     event = MagicMock(src_path="test.txt")
     handler.on_closed(event)
     assert queue.empty()
+
 
 def test_on_closed_already_processed():
     queue = Queue()
@@ -26,6 +28,7 @@ def test_on_closed_already_processed():
     event = MagicMock(src_path="test.tar")
     handler.on_closed(event)
     assert queue.empty()
+
 
 def test_on_closed_debounce():
     queue = Queue()
