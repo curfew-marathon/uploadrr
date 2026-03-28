@@ -1,4 +1,5 @@
 import os
+import pytest
 from queue import Queue
 from unittest.mock import patch
 from uploadrr.files import add_files
