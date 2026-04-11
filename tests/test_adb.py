@@ -5,7 +5,12 @@ import pytest
 sys.modules['ppadb'] = MagicMock()
 sys.modules['ppadb.client'] = MagicMock()
 
-from uploadrr.adb import get_device
+from uploadrr.adb import get_device, pre_work
+
+def test_pre_work():
+    mock_device = MagicMock()
+    pre_work(mock_device)
+    mock_device.shell.assert_called_once_with("am force-stop com.google.android.apps.photos")
 
 def test_get_device_ioerror(monkeypatch):
     mock_client = MagicMock()
