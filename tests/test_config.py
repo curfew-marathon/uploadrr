@@ -12,7 +12,6 @@ def test_config_methods(tmp_path):
 
     with patch("uploadrr.config.CANDIDATES", [str(config_file)]):
         config = Config()
-        assert config.get_album() == "/albums"
         assert config.get_archive() == "/archives"
         data = config.get_data()
         assert len(data) == 2

@@ -38,9 +38,6 @@ class Config:
                 self.data.append(d)
                 self._archive_to_serial[archive_dir] = serial
 
-    def get_album(self):
-        return self.album_root
-
     def get_archive(self):
         return self.archive_root
 
