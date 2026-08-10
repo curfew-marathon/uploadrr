@@ -4,7 +4,7 @@ import shlex
 
 from ppadb.client import Client as AdbClient
 
-from uploadrr.constants import STORAGE, DOWNLOAD, CAMERA
+from uploadrr.constants import CAMERA, DOWNLOAD, STORAGE
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ def get_device(serial):
     logger.debug("Connecting to device: %s", serial)
     device = CLIENT.device(serial)
     if device is None:
-        raise IOError("Could not connect to device %s - check ADB connection" % serial)
+        raise OSError("Could not connect to device %s - check ADB connection" % serial)
     return device
 
 
@@ -35,14 +35,14 @@ def verify_free_space(device, file_size):
                 required_space,
             )
             if free < required_space:
-                raise IOError(
+                raise OSError(
                     "Device %s - Insufficient free space (free: %d, required: %d)"
                     % (device.serial, free, required_space)
                 )
             logger.debug("Device %s - Storage check passed", device.serial)
             return
 
-    raise IOError("Could not determine free storage for device %s" % device.serial)
+    raise OSError("Could not determine free storage for device %s" % device.serial)
 
 
 def push_file(serial, file):

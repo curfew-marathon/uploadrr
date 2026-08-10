@@ -1,6 +1,8 @@
-import pytest
 import os
 from unittest.mock import patch
+
+import pytest
+
 from uploadrr.config import Config
 
 

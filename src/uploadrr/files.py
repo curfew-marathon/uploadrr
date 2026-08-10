@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from queue import Queue, Empty
+from queue import Empty, Queue
 
 from watchdog.observers import Observer
 
@@ -49,7 +49,7 @@ def launch():
                 except KeyError:
                     logger.warning("No device configuration found for file: %s", f)
                     # Don't delete file - might be a temporary config issue
-                except IOError as e:
+                except OSError as e:
                     logger.error(
                         "Failed to process %s: %s - file will remain for retry",
                         f,
