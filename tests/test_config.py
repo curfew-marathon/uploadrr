@@ -15,13 +15,13 @@ def test_config_methods(tmp_path):
         assert config.get_album() == "/albums"
         assert config.get_archive() == "/archives"
         data = config.get_data()
-        assert len(data) == 2
-        assert data[0]["import"] == "camera1"
-        assert data[1]["serial"] == "serial123"
+        assert len(data) == 1
+        assert data[0]["import"] == ["camera1", "camera2"]
+        assert data[0]["serial"] == "serial123"
 
-        # Test get_serial
-        cam1_path = os.path.join("/archives", "camera1")
-        assert config.get_serial(cam1_path) == "serial123"
+        # Test get_serial — archive path is keyed by section name, not import_dir
+        device1_path = os.path.join("/archives", "device1")
+        assert config.get_serial(device1_path) == "serial123"
 
         with pytest.raises(KeyError, match="No serial for /invalid"):
             config.get_serial("/invalid")
