@@ -19,7 +19,11 @@ class Config:
                 continue
 
             album_dir = os.path.join(self.album_root, section_name)
-            import_dirs = [iv.strip() for iv in parser[section_name]["import_dir"].split(",") if iv.strip()]
+            import_dirs = [
+                iv.strip()
+                for iv in parser[section_name]["import_dir"].split(",")
+                if iv.strip()
+            ]
             serial = parser[section_name]["serial"]
             archive_dir = os.path.join(self.archive_root, section_name)
 

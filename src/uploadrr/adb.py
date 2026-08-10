@@ -15,7 +15,7 @@ def get_device(serial):
     logger.debug("Connecting to device: %s", serial)
     device = CLIENT.device(serial)
     if device is None:
-        raise OSError("Could not connect to device %s - check ADB connection" % serial)
+        raise OSError(f"Could not connect to device {serial} - check ADB connection")
     return device
 
 
@@ -36,13 +36,12 @@ def verify_free_space(device, file_size):
             )
             if free < required_space:
                 raise OSError(
-                    "Device %s - Insufficient free space (free: %d, required: %d)"
-                    % (device.serial, free, required_space)
+                    f"Device {device.serial} - Insufficient free space (free: {free}, required: {required_space})"
                 )
             logger.debug("Device %s - Storage check passed", device.serial)
             return
 
-    raise OSError("Could not determine free storage for device %s" % device.serial)
+    raise OSError(f"Could not determine free storage for device {device.serial}")
 
 
 def push_file(serial, file):

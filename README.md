@@ -89,7 +89,7 @@ import_dir = corporate
 
 - **`album_dir`**: Root directory for album storage (e.g., `/path/to/albums`)
 - **`archive_dir`**: Root directory where tar archives are monitored (e.g., `/path/to/archives`)
-- **`import_dir`**: Comma-separated list of subdirectories under `archive_dir` to monitor for this device
+- **`import_dir`**: Comma-separated list of source directories on the Android device to import from (used by importrr; the archive directory is derived from the section name)
 - **`serial`**: Android device serial number (get with `adb devices`)
 
 ### Configuration Structure
@@ -98,11 +98,12 @@ The configuration uses a section-based approach:
 - **`[global]`**: Contains shared settings for album and archive root directories
 - **`[device_name]`**: Each device gets its own section (e.g., `[home]`, `[work]`) containing:
   - `serial`: The device's unique ADB serial number
-  - `import_dir`: Subdirectories within the archive root to monitor for this device
+  - `import_dir`: Source directories on the Android device that importrr pulls from
 
 For example, with the configuration above:
-- Files in `/path/to/archives/personal/` and `/path/to/archives/photos/` will be uploaded to device `ABC123DEF456` (home)
-- Files in `/path/to/archives/corporate/` will be uploaded to device `XYZ789GHI012` (work)
+- Tar files in `/path/to/archives/home/` will be uploaded to device `ABC123DEF456`
+- Tar files in `/path/to/archives/work/` will be uploaded to device `XYZ789GHI012`
+- importrr pulls from `personal` and `photos` directories on the `home` device
 
 ### Getting Device Serial Numbers
 

@@ -56,7 +56,7 @@ def launch():
                         str(e),
                     )
                     # Don't delete file - could be temporary storage/device issue
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.error("Unexpected error processing %s: %s", f, str(e))
                     # Don't delete file for unexpected errors
 
@@ -126,5 +126,5 @@ def add_files(path, queue):
         logger.warning("Archive directory not found: %s", path)
     except PermissionError:
         logger.error("Permission denied accessing directory: %s", path)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error("Error scanning directory %s: %s", path, str(e))
