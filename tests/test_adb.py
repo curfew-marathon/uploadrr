@@ -1,11 +1,13 @@
 import sys
 from unittest.mock import MagicMock
+
 import pytest
 
 sys.modules['ppadb'] = MagicMock()
 sys.modules['ppadb.client'] = MagicMock()
 
 from uploadrr.adb import get_device, pre_work
+
 
 def test_pre_work():
     mock_device = MagicMock()
@@ -48,6 +50,7 @@ def test_push_file_quotes_shell_arguments(monkeypatch):
 
     # Check if shell was called with quoted arguments
     import shlex
+
     from uploadrr.constants import CAMERA, DOWNLOAD
     expected_file_dest = DOWNLOAD + 'file with spaces and "quotes".tar'
 

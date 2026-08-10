@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-from queue import Queue, Empty
+from queue import Empty, Queue
 
 from watchdog.observers import Observer
 
@@ -49,14 +49,14 @@ def launch():
                 except KeyError:
                     logger.warning("No device configuration found for file: %s", f)
                     # Don't delete file - might be a temporary config issue
-                except IOError as e:
+                except OSError as e:
                     logger.error(
                         "Failed to process %s: %s - file will remain for retry",
                         f,
                         str(e),
                     )
                     # Don't delete file - could be temporary storage/device issue
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.error("Unexpected error processing %s: %s", f, str(e))
                     # Don't delete file for unexpected errors
 
@@ -126,5 +126,5 @@ def add_files(path, queue):
         logger.warning("Archive directory not found: %s", path)
     except PermissionError:
         logger.error("Permission denied accessing directory: %s", path)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error("Error scanning directory %s: %s", path, str(e))

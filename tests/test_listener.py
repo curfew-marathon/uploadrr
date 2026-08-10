@@ -1,6 +1,7 @@
 import time
 from queue import Queue
 from unittest.mock import MagicMock
+
 from uploadrr.listener import MonitorFolder
 
 
