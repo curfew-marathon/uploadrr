@@ -89,7 +89,7 @@ import_dir = corporate
 
 - **`album_dir`**: Root directory for album storage (e.g., `/path/to/albums`)
 - **`archive_dir`**: Root directory where tar archives are monitored (e.g., `/path/to/archives`)
-- **`import_dir`**: Comma-separated list of subdirectories under `album_dir/[section_name]/` where photos are placed for importrr to process. Not used by uploadrr directly — uploadrr watches `archive_dir/[section_name]/` for the tar files that importrr produces.
+- **`import_dir`**: Comma-separated list of subdirectories under `album_dir/[section_name]/` where photos are placed for importrr to process. Not used by uploadrr directly - uploadrr watches `archive_dir/[section_name]/` for the tar files that importrr produces.
 - **`serial`**: Android device serial number (get with `adb devices`)
 
 ### Configuration Structure
