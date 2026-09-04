@@ -2,8 +2,10 @@ import logging
 import os
 import re
 import shlex
+import tarfile
 import threading
 import time
+from urllib.parse import quote
 
 from ppadb.client import Client as AdbClient
 
@@ -31,22 +33,31 @@ class AdbCommandError(AdbError):
         self.output = output
 
 
-class _PushAborted(Exception):
-    """Raised from the push progress callback to unwind a doomed transfer."""
-
-
 def _client():
+    """Return the module-wide adb-server client, creating it on first use.
+
+    ppadb's host commands (``devices()``, ``device(serial)``) call
+    ``create_connection()`` with no timeout, so the instance's method is
+    wrapped with a default: without it, a stalled adb server could block
+    `get_device` before any per-call timeout ever applies.
+    """
     global _CLIENT
     if _CLIENT is None:
-        _CLIENT = AdbClient(host="127.0.0.1", port=5037)
+        client = AdbClient(host="127.0.0.1", port=5037)
+        bound_create_connection = client.create_connection
+        client.create_connection = lambda timeout=None: bound_create_connection(
+            timeout=timeout or C.CONNECT_TIMEOUT
+        )
+        _CLIENT = client
     return _CLIENT
 
 
 def get_device(serial):
+    """Look up a connected device by serial, wrapped as a `Device`."""
     logger.debug("Connecting to device: %s", serial)
     try:
         raw = _client().device(serial)
-    except RuntimeError as e:  # adb server not running / unreachable
+    except Exception as e:  # socket timeout, adb server down, transport error
         raise AdbError(f"adb server unreachable for {serial}: {e}") from e
     if raw is None:
         raise AdbError(f"Device {serial} not connected - check `adb devices`")
@@ -87,63 +98,57 @@ class Device:
         return body
 
     def push(self, src, dest, *, stall_timeout=None):
-        """Push a local file, raising ``AdbError`` if the transfer stalls or is
-        too slow overall.
+        """Push a local file over a Sync connection this call owns.
 
-        ``ppadb``'s sync push has no timeout at all, so it runs on a daemon
-        worker thread while this thread watches progress: it aborts if no bytes
-        move for ``stall_timeout`` seconds, and the progress callback itself
-        bails out if the whole transfer can't sustain a minimum average rate.
-        Sizes here run from tens of MB to a couple of GB, so both guards are
-        rate-based rather than a fixed wall-clock budget.
+        ``ppadb``'s own ``push()`` has no timeout: a stalled transfer used to
+        leave an abandoned worker thread that could keep writing ``dest``
+        after the caller cleaned it up. Owning the connection lets a stall be
+        torn down for real: the socket gets a timeout that bounds every
+        send/recv in the data phase, and if the worker is still alive after
+        the overall deadline its socket is closed and it is joined before
+        raising, so it is guaranteed dead by the time this call returns.
         """
+        from ppadb.sync import Sync
+
         stall_timeout = stall_timeout or C.PUSH_STALL_TIMEOUT
         total = os.path.getsize(src)
-        hard_deadline = time.monotonic() + max(
-            C.PUSH_TIMEOUT_FLOOR, total / C.PUSH_MIN_BYTES_PER_SEC
-        )
-        state = {"tick": time.monotonic(), "sent": 0, "err": None, "done": False}
+        overall = max(C.PUSH_TIMEOUT_FLOOR, total / C.PUSH_MIN_BYTES_PER_SEC)
 
-        def _progress(_name, _total, sent):
-            state["sent"] = sent
-            state["tick"] = time.monotonic()
-            if time.monotonic() > hard_deadline:
-                raise _PushAborted(
-                    f"transfer below {C.PUSH_MIN_BYTES_PER_SEC} B/s "
-                    f"(sent {sent}/{total} bytes)"
-                )
+        conn = self._raw.sync()
+        conn.socket.settimeout(stall_timeout)
+        result = {"err": None}
 
         def _run():
             try:
-                self._raw.push(src, dest, progress=_progress)
-            except Exception as e:  # noqa: BLE001 - handed to the watching thread
-                state["err"] = e
-            finally:
-                state["done"] = True
+                with conn:
+                    Sync(conn).push(src, dest, Sync.DEFAULT_CHMOD, progress=None)
+            except Exception as e:  # noqa: BLE001 - reported to the waiting thread
+                result["err"] = e
 
         worker = threading.Thread(
             target=_run, name=f"adb-push-{self.serial}", daemon=True
         )
         worker.start()
+        worker.join(overall)
 
-        poll = max(0.05, min(1.0, stall_timeout / 4))
-        while not state["done"]:
-            worker.join(timeout=poll)
-            if state["done"]:
-                break
-            if time.monotonic() - state["tick"] > stall_timeout:
-                raise AdbError(
-                    f"push {src} -> {self.serial}:{dest} stalled for "
-                    f"{stall_timeout}s at {state['sent']}/{total} bytes"
-                )
-
-        if state["err"] is not None:
+        if worker.is_alive():
+            conn.close()  # force the blocked worker to unwind
+            worker.join(10)
+            # Closing the socket may also land a secondary error in
+            # result["err"], but the deadline is what actually happened from
+            # the caller's point of view, so it takes precedence.
             raise AdbError(
-                f"push {src} -> {self.serial}:{dest} failed: {state['err']}"
-            ) from state["err"]
+                f"push {src} -> {self.serial}:{dest} exceeded {overall:.0f}s"
+            )
+
+        if result["err"] is not None:
+            raise AdbError(
+                f"push {src} -> {self.serial}:{dest} failed: {result['err']}"
+            ) from result["err"]
 
 
 def verify_free_space(device, file_size):
+    """Raise `AdbError` unless the device has roughly 3x `file_size` free."""
     logger.debug("Checking free space on device %s", device.serial)
     out = device.sh(f"df -k {shlex.quote(C.CAMERA)}")
     rows = [r for r in out.splitlines() if r.strip()]
@@ -172,14 +177,35 @@ def verify_free_space(device, file_size):
     logger.debug("Device %s - storage check passed", device.serial)
 
 
-def _reject_unsafe_paths(entries):
-    for e in entries:
-        if e.startswith(("/", "../")) or "/../" in e:
-            raise AdbError(f"Refusing archive with unsafe path entry: {e!r}")
+def _archive_members(path):
+    """Validate a local tar archive and return its regular-file member names.
+
+    Read locally rather than via the device's `tar -tf`, so link targets and
+    path traversal can be checked directly instead of trusting names alone:
+    a symlink member can point outside the extraction directory and pass a
+    name-only check, then have later members extract through it.
+    """
+    names = []
+    with tarfile.open(path) as tar:
+        for member in tar.getmembers():
+            parts = member.name.split("/")
+            if member.name.startswith("/") or ".." in parts:
+                raise AdbError(f"Refusing archive: unsafe path {member.name!r}")
+            if not (member.isfile() or member.isdir()):
+                raise AdbError(
+                    f"Refusing archive: {member.name!r} is a link or special file"
+                )
+            if member.isfile():
+                names.append(member.name)
+    if not names:
+        raise AdbError(f"Archive {path} contains no regular files")
+    return names
 
 
 def push_file(serial, file):
+    """Push, validate, and extract one archive on `serial`, then post-process."""
     logger.info("Starting transfer of %s to device %s", file, serial)
+    names = _archive_members(file)  # validated locally before anything is pushed
     device = get_device(serial)
 
     pre_work(device)
@@ -191,7 +217,6 @@ def push_file(serial, file):
     q_dest = shlex.quote(file_dest)
     q_camera = shlex.quote(C.CAMERA)
 
-    scanned = []
     try:
         device.sh(f"mkdir -p {q_camera}")
 
@@ -200,18 +225,10 @@ def push_file(serial, file):
         )
         device.push(file, file_dest)
 
-        # Validate before extracting, and fail loudly instead of deleting the
-        # source archive after a broken extraction.
-        listing = device.sh(f"tar -tf {q_dest}", timeout=C.EXTRACT_TIMEOUT)
-        entries = [e for e in listing.splitlines() if e.strip()]
-        if not entries:
-            raise AdbError(f"Archive {file_dest} on {device.serial} lists no entries")
-        _reject_unsafe_paths(entries)
-
         logger.info("Extracting archive on device %s: %s", device.serial, file_dest)
         device.sh(f"tar -xf {q_dest} -C {q_camera}", timeout=C.EXTRACT_TIMEOUT)
 
-        scanned = [C.CAMERA + e for e in entries if not e.endswith("/")]
+        scanned = [C.CAMERA + n for n in names]
         logger.info(
             "Extracted %d files to %s on device %s",
             len(scanned),
@@ -220,7 +237,7 @@ def push_file(serial, file):
         )
     finally:
         try:
-            device.sh(f"rm -f {q_dest}", check=False)
+            device.sh(f"rm -f {q_dest}", check=True)
         except AdbError as e:
             logger.warning(
                 "Could not remove %s on device %s: %s", file_dest, device.serial, e
@@ -231,13 +248,17 @@ def push_file(serial, file):
 
 
 def pre_work(device):
-    # `am force-stop` was removed here: it aborts any in-progress Google Photos
-    # upload job. If a stuck upload queue is ever observed it can come back as an
-    # explicit, opt-in recovery step.
+    """Placeholder for pre-transfer device prep; currently a deliberate no-op.
+
+    `am force-stop` was removed here: it aborts any in-progress Google Photos
+    upload job. If a stuck upload queue is ever observed it can come back as
+    an explicit, opt-in recovery step.
+    """
     logger.debug("pre_work: no-op for device %s", device.serial)
 
 
 def post_work(device, scanned_paths):
+    """Wake/unlock the device, then trigger a media scan of the new files."""
     _ensure_interactive(device)
     # Leave Doze if a previous run (or a person) forced it.
     device.sh("dumpsys deviceidle unforce", check=False)
@@ -249,24 +270,39 @@ def post_work(device, scanned_paths):
     )
 
 
-def _interactive(device):
-    """True when the screen is on and no keyguard is in the way."""
+def _screen_awake(device):
+    """True when `dumpsys power` reports the display is on."""
     power = device.sh(
         "dumpsys power | grep -E 'mWakefulness=|Display Power'", check=False
     )
-    awake = "Awake" in power or "state=ON" in power
+    return "Awake" in power or "state=ON" in power
 
+
+def _keyguard_clear(device):
+    """True only on an affirmative "no keyguard" signal from `dumpsys window`.
+
+    Unrecognized or empty output (a failed pipe, a renamed field on a newer
+    Android version) is treated as still locked, not as clear - otherwise an
+    awake-but-locked device would look interactive and skip the escalation
+    entirely.
+    """
     keyguard = device.sh(
         "dumpsys window 2>/dev/null | "
         "grep -iE 'mShowingLockscreen|mDreamingLockscreen|KeyguardShowing'",
         check=False,
     ).lower()
-    keyguard_up = "true" in keyguard
+    if "true" in keyguard:
+        return False
+    return "false" in keyguard  # explicit "not showing"; unrecognized output -> False
 
-    return awake and not keyguard_up
+
+def _interactive(device):
+    """True when the screen is confirmed awake and the keyguard confirmed down."""
+    return _screen_awake(device) and _keyguard_clear(device)
 
 
 def _swipe_up(device):
+    """Swipe up from near the bottom of the screen to dismiss a keyguard."""
     size = device.sh("wm size", check=False)
     m = re.search(r"(\d+)x(\d+)", size)
     w, h = (int(m.group(1)), int(m.group(2))) if m else (1080, 2400)
@@ -294,7 +330,10 @@ def _ensure_interactive(device, settle=1.5):
         time.sleep(settle)
     else:
         if not _interactive(device):
-            logger.warning(
+            # Still worth proceeding (wake + swipe are harmless), but only
+            # worth a warning if the screen itself never came on.
+            log = logger.info if _screen_awake(device) else logger.warning
+            log(
                 "Device %s not confirmed interactive after escalation - "
                 "proceeding anyway",
                 device.serial,
@@ -310,17 +349,23 @@ def _ensure_interactive(device, settle=1.5):
 
 
 def _media_scan(device, paths, batch=40):
+    """Broadcast MEDIA_SCANNER_SCAN_FILE for each extracted path in batches."""
     if not paths:
         logger.debug("No extracted files to scan on device %s", device.serial)
         return
     for i in range(0, len(paths), batch):
         chunk = paths[i : i + batch]
-        cmd = " ; ".join(
+        # `&&`, not `;`: a broadcast that fails to dispatch at all is a real
+        # sign the scan mechanism is broken on this device, so it should
+        # propagate rather than be hidden behind the last command's status.
+        # (Note `am broadcast` still exits 0 even when a receiver ignores the
+        # intent - this only catches failures to dispatch in the first place.)
+        cmd = " && ".join(
             "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE "
-            f"-d {shlex.quote('file://' + p)}"
+            f"-d {shlex.quote('file://' + quote(p, safe='/'))}"
             for p in chunk
         )
-        device.sh(cmd, check=False)
+        device.sh(cmd)
     logger.info(
         "Requested media scan of %d files on device %s", len(paths), device.serial
     )

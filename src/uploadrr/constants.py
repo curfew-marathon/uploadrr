@@ -6,8 +6,9 @@ CANDIDATES = ["config.ini", "/config/config.ini"]
 PHOTOS_PKG = "com.google.android.apps.photos"
 
 # ppadb socket timeouts, in seconds.
+CONNECT_TIMEOUT = 10  # adb-server discovery: `devices()` / `device(serial)`
 SHELL_TIMEOUT = 30  # df, input, am, dumpsys and other short control commands
-EXTRACT_TIMEOUT = 1800  # on-device `tar -xf` / `tar -tf` of a multi-GB archive
+EXTRACT_TIMEOUT = 1800  # on-device `tar -xf` of a multi-GB archive
 
 # Archives run from tens of MB to a couple of GB, so the push guard is based on
 # throughput, not a fixed wall-clock budget: abort if no bytes move for
