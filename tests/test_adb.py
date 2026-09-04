@@ -45,8 +45,8 @@ class _FakeSync:
         self.conn.behavior(self.conn, src, dest)
 
 
-# `Device.push` does `from ppadb.sync import Sync` lazily, so this needs to be
-# registered before any test calls it (module-level, ahead of all tests).
+# `uploadrr.adb` imports `Sync` from `ppadb.sync` at module level, so this
+# needs to be registered before `uploadrr.adb` is first imported below.
 _fake_sync_module = types.ModuleType("ppadb.sync")
 _fake_sync_module.Sync = _FakeSync  # type: ignore[attr-defined]
 sys.modules["ppadb.sync"] = _fake_sync_module
@@ -66,6 +66,15 @@ from uploadrr.adb import (
     push_file,
     verify_free_space,
 )
+
+# The fakes above only existed to satisfy uploadrr.adb's own module-level
+# imports; it now holds its own references (AdbClient, Sync), so don't leave
+# process-global fakes in sys.modules for the rest of the pytest session -
+# any test module that imports uploadrr.adb/.files/.config later, or a bare
+# `import ppadb` anywhere else, should see the real package again.
+del sys.modules["ppadb"]
+del sys.modules["ppadb.client"]
+del sys.modules["ppadb.sync"]
 
 _SPLIT = "\necho " + _RC_MARKER
 
@@ -215,6 +224,36 @@ def test_push_propagates_worker_error(tmp_path):
     raw = FakeRaw(push_behavior=_push_boom)
     with pytest.raises(AdbError, match="failed"):
         Device(raw).push(str(f), "/sdcard/Download/a.tar")
+
+
+def test_push_wraps_sync_setup_failure_as_adberror(tmp_path):
+    # raw.sync() itself can raise (e.g. the sync: handshake fails) before any
+    # connection object exists - this must not leak a raw RuntimeError, which
+    # files.py's `except OSError` handler wouldn't catch.
+    f = tmp_path / "a.tar"
+    f.write_bytes(b"x" * 4096)
+    raw = FakeRaw()
+
+    def boom_sync():
+        raise RuntimeError("adb server closed the connection")
+
+    raw.sync = boom_sync
+    with pytest.raises(AdbError, match="could not start"):
+        Device(raw).push(str(f), "/sdcard/Download/a.tar")
+
+
+def test_push_closes_partial_connection_when_configuring_it_fails(tmp_path):
+    f = tmp_path / "a.tar"
+    f.write_bytes(b"x" * 4096)
+    raw = FakeRaw()
+    conn = _FakeSyncConn(_push_success, raw.pushed)
+    conn.socket.settimeout.side_effect = OSError("bad file descriptor")
+    raw.sync = lambda: conn
+
+    with pytest.raises(AdbError, match="could not start"):
+        Device(raw).push(str(f), "/sdcard/Download/a.tar")
+
+    assert conn.closed.is_set()
 
 
 # --- get_device / _client ----------------------------------------------------
@@ -394,6 +433,23 @@ def test_push_file_happy_path_scans_extracted_files(monkeypatch, tmp_path):
     assert any(c.startswith("mkdir -p") for c in raw.shell_calls)
     assert any(c.startswith("rm -f") for c in raw.shell_calls)
     assert not any(c.startswith("tar -tf") for c in raw.shell_calls)
+
+
+def test_push_file_creates_camera_dir_before_checking_free_space(monkeypatch, tmp_path):
+    # `df` on a path that doesn't exist yet fails, so mkdir -p must run first -
+    # otherwise a fresh device (no /sdcard/DCIM yet) could never get past this.
+    tar = _make_tar(tmp_path, "e.tar", [("p1.jpg", b"data")])
+    raw = FakeRaw({"df -k": (DF_OK, 0)})
+    monkeypatch.setattr("uploadrr.adb.get_device", lambda s: Device(raw))
+    monkeypatch.setattr("uploadrr.adb.post_work", MagicMock())
+
+    push_file("test_serial", str(tar))
+
+    mkdir_index = next(
+        i for i, c in enumerate(raw.shell_calls) if c.startswith("mkdir -p")
+    )
+    df_index = next(i for i, c in enumerate(raw.shell_calls) if c.startswith("df -k"))
+    assert mkdir_index < df_index
 
 
 # --- post_work helpers ---------------------------------------------------------

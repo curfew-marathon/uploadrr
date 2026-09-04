@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 import re
@@ -8,6 +9,7 @@ import time
 from urllib.parse import quote
 
 from ppadb.client import Client as AdbClient
+from ppadb.sync import Sync
 
 from uploadrr import constants as C
 
@@ -108,14 +110,25 @@ class Device:
         the overall deadline its socket is closed and it is joined before
         raising, so it is guaranteed dead by the time this call returns.
         """
-        from ppadb.sync import Sync
-
         stall_timeout = stall_timeout or C.PUSH_STALL_TIMEOUT
         total = os.path.getsize(src)
         overall = max(C.PUSH_TIMEOUT_FLOOR, total / C.PUSH_MIN_BYTES_PER_SEC)
 
-        conn = self._raw.sync()
-        conn.socket.settimeout(stall_timeout)
+        conn = None
+        try:
+            conn = self._raw.sync()
+            conn.socket.settimeout(stall_timeout)
+        except Exception as e:
+            if conn is not None:
+                # Best-effort teardown: ppadb's Sync connection doesn't always
+                # expose a clean close() when the socket failed mid-setup, and
+                # a secondary error here must not mask the real one below.
+                with contextlib.suppress(Exception):
+                    conn.close()
+            raise AdbError(
+                f"push {src} -> {self.serial}:{dest} could not start: {e}"
+            ) from e
+
         result = {"err": None}
 
         def _run():
@@ -211,15 +224,18 @@ def push_file(serial, file):
     pre_work(device)
     file_size = os.stat(file).st_size
     logger.debug("File size: %d bytes", file_size)
-    verify_free_space(device, file_size)
 
     file_dest = C.DOWNLOAD + os.path.basename(file)
     q_dest = shlex.quote(file_dest)
     q_camera = shlex.quote(C.CAMERA)
 
-    try:
-        device.sh(f"mkdir -p {q_camera}")
+    # Create the extraction target before checking free space on it: on a
+    # fresh device /sdcard/DCIM may not exist yet, and `df` on a missing path
+    # fails, which would otherwise block every transfer forever.
+    device.sh(f"mkdir -p {q_camera}")
+    verify_free_space(device, file_size)
 
+    try:
         logger.info(
             "Pushing file to device %s: %s -> %s", device.serial, file, file_dest
         )
