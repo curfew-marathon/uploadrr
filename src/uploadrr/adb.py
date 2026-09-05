@@ -12,6 +12,7 @@ from ppadb.client import Client as AdbClient
 from ppadb.sync import Sync
 
 from uploadrr import constants as C
+from uploadrr import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,8 @@ class Device:
                 f"push {src} -> {self.serial}:{dest} failed: {result['err']}"
             ) from result["err"]
 
+        metrics.PUSH_BYTES_TOTAL.labels(serial=self.serial).inc(total)
+
 
 def verify_free_space(device, file_size):
     """Raise `AdbError` unless the device has roughly 3x `file_size` free."""
@@ -267,28 +270,41 @@ def push_file(serial, file):
     verify_free_space(device, file_size)
 
     try:
-        logger.info(
-            "Pushing file to device %s: %s -> %s", device.serial, file, file_dest
-        )
-        device.push(file, file_dest)
+        with metrics.PUSH_SECONDS.labels(serial=device.serial).time():
+            try:
+                logger.info(
+                    "Pushing file to device %s: %s -> %s",
+                    device.serial,
+                    file,
+                    file_dest,
+                )
+                device.push(file, file_dest)
 
-        logger.info("Extracting archive on device %s: %s", device.serial, file_dest)
-        device.sh(f"tar -xf {q_dest} -C {q_camera}", timeout=C.EXTRACT_TIMEOUT)
+                logger.info(
+                    "Extracting archive on device %s: %s", device.serial, file_dest
+                )
+                device.sh(f"tar -xf {q_dest} -C {q_camera}", timeout=C.EXTRACT_TIMEOUT)
 
-        scanned = [C.CAMERA + n for n in names]
-        logger.info(
-            "Extracted %d files to %s on device %s",
-            len(scanned),
-            C.CAMERA,
-            device.serial,
-        )
-    finally:
-        try:
-            device.sh(f"rm -f {q_dest}", check=True)
-        except AdbError as e:
-            logger.warning(
-                "Could not remove %s on device %s: %s", file_dest, device.serial, e
-            )
+                scanned = [C.CAMERA + n for n in names]
+                logger.info(
+                    "Extracted %d files to %s on device %s",
+                    len(scanned),
+                    C.CAMERA,
+                    device.serial,
+                )
+            finally:
+                try:
+                    device.sh(f"rm -f {q_dest}", check=True)
+                except AdbError as e:
+                    logger.warning(
+                        "Could not remove %s on device %s: %s",
+                        file_dest,
+                        device.serial,
+                        e,
+                    )
+    except AdbError:
+        metrics.PUSH_FAILURES_TOTAL.labels(serial=device.serial).inc()
+        raise
 
     post_work(device, scanned)
     logger.info("Successfully completed transfer to device %s", device.serial)

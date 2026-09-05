@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from uploadrr import constants as C
+from uploadrr import metrics
 from uploadrr.adb import (
     _RC_MARKER,
     AdbCommandError,
@@ -21,6 +22,15 @@ from uploadrr.adb import (
     push_file,
     verify_free_space,
 )
+
+
+def _labeled(counter, **labels):
+    return counter.labels(**labels)._value.get()
+
+
+def _histogram_count(histogram, **labels):
+    child = histogram.labels(**labels) if labels else histogram
+    return next(s.value for s in child._child_samples() if s.name == "_count")
 
 
 class _FakeSyncConn:
@@ -226,8 +236,10 @@ def test_push_success_records_transfer(tmp_path):
     f = tmp_path / "a.tar"
     f.write_bytes(b"x" * 4096)
     raw = FakeRaw()
+    before = _labeled(metrics.PUSH_BYTES_TOTAL, serial=raw.serial)
     Device(raw).push(str(f), "/sdcard/Download/a.tar")
     assert raw.pushed == [(str(f), "/sdcard/Download/a.tar")]
+    assert _labeled(metrics.PUSH_BYTES_TOTAL, serial=raw.serial) == before + 4096
 
 
 def test_push_sets_socket_timeout_for_stall_detection(tmp_path):
@@ -436,6 +448,7 @@ def test_push_file_raises_and_keeps_source_when_extract_fails(monkeypatch, tmp_p
     monkeypatch.setattr("uploadrr.adb.get_device", lambda s: Device(raw))
     post = MagicMock()
     monkeypatch.setattr("uploadrr.adb.post_work", post)
+    before = _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial)
 
     with pytest.raises(AdbCommandError):
         push_file("test_serial", str(tar))
@@ -443,6 +456,7 @@ def test_push_file_raises_and_keeps_source_when_extract_fails(monkeypatch, tmp_p
     assert tar.exists()  # caller decides deletion; push_file never removed it
     assert post.call_count == 0
     assert any(c.startswith("rm -f") for c in raw.shell_calls)  # finally cleanup ran
+    assert _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial) == before + 1
 
 
 def test_push_file_rejects_unsafe_archive_before_touching_device(tmp_path):
@@ -480,6 +494,8 @@ def test_push_file_happy_path_scans_extracted_files(monkeypatch, tmp_path):
         "uploadrr.adb.post_work",
         lambda d, paths: captured.setdefault("paths", paths),
     )
+    before_seconds = _histogram_count(metrics.PUSH_SECONDS, serial=raw.serial)
+    before_failures = _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial)
 
     push_file("test_serial", str(tar))
 
@@ -491,6 +507,9 @@ def test_push_file_happy_path_scans_extracted_files(monkeypatch, tmp_path):
     assert any(c.startswith("mkdir -p") for c in raw.shell_calls)
     assert any(c.startswith("rm -f") for c in raw.shell_calls)
     assert not any(c.startswith("tar -tf") for c in raw.shell_calls)
+    assert _histogram_count(metrics.PUSH_SECONDS, serial=raw.serial) == before_seconds + 1
+    # A successful push must not also count as a failure.
+    assert _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial) == before_failures
 
 
 def test_push_file_creates_camera_dir_before_checking_free_space(monkeypatch, tmp_path):

@@ -12,6 +12,7 @@ Uploadrr is an automated media file transfer tool that monitors archive director
 - 💾 **Storage validation**: Checks available storage space before transfer
 - 🔧 **Multi-device support**: Can handle multiple Android devices with different configurations
 - 🐳 **Docker support**: Includes Dockerfile for containerized deployment
+- 📊 **Prometheus metrics**: Exposes queue depth, transfer throughput, and failure rates over HTTP
 
 ## Prerequisites
 
@@ -153,13 +154,15 @@ src/
     ├── config.py          # Configuration file parser
     ├── constants.py       # Application constants
     ├── files.py           # File monitoring and processing
-    └── listener.py        # File system event handler
+    ├── listener.py        # File system event handler
+    └── metrics.py         # Prometheus metrics
 ```
 
 ## Dependencies
 
 - **`pure-python-adb`**: Pure Python ADB client for device communication
 - **`watchdog`**: File system monitoring library
+- **`prometheus-client`**: Prometheus metrics exposition
 
 ## Logging
 
@@ -199,6 +202,34 @@ The application automatically reduces verbose logging from:
 - **Watchdog internal events**: File system modification events are filtered to WARNING level
 - **Duplicate processing**: Files are debounced to prevent processing the same file multiple times
 - **Event spam**: Rapid file modification events are debounced with a 2-second window
+
+## Metrics
+
+Uploadrr exposes Prometheus-format metrics over HTTP for monitoring queue depth, transfer
+throughput, and failure rates.
+
+### Configuration
+Set these environment variables to control the metrics endpoint:
+- `METRICS_ENABLED` (default `true`): set to `false` to disable the metrics server entirely
+- `METRICS_PORT` (default `9200`): port the `/metrics` endpoint listens on
+
+```bash
+# Docker example
+docker run -e METRICS_PORT=9200 curfewmarathon/uploadrr
+```
+
+With `--net=host` (the mode this project documents for reaching the host's adb server), the
+metrics port is already reachable at `<host>:9200` directly - no `-p` mapping needed.
+
+### Metrics Exposed
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `uploadrr_queue_depth` | Gauge | - | Files waiting to be processed |
+| `uploadrr_files_processed_total` | Counter | `outcome` | Files processed, by outcome (`success`, `no_device_config`, `os_error`, `unexpected_error`) |
+| `uploadrr_file_processing_seconds` | Histogram | - | Time to process one file (push + extract + cleanup) |
+| `uploadrr_push_seconds` | Histogram | `serial` | Time to push and extract one archive on a device |
+| `uploadrr_push_bytes_total` | Counter | `serial` | Bytes successfully pushed to a device |
+| `uploadrr_push_failures_total` | Counter | `serial` | Failed transfer attempts, by device |
 
 ## Error Handling
 
