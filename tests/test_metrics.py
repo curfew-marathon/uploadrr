@@ -33,3 +33,17 @@ def test_start_swallows_port_collision():
     ):
         metrics.start(9200)  # must not raise
     mock_logger.error.assert_called_once()
+
+
+def test_start_swallows_non_numeric_port():
+    with patch("uploadrr.metrics.logger") as mock_logger:
+        metrics.start("abc")  # must not raise
+    mock_logger.error.assert_called_once()
+
+
+def test_start_swallows_out_of_range_port():
+    # Not mocked: an out-of-range port raises OverflowError from the real
+    # socket bind inside start_http_server, not from int() itself.
+    with patch("uploadrr.metrics.logger") as mock_logger:
+        metrics.start("99999999")  # must not raise
+    mock_logger.error.assert_called_once()
