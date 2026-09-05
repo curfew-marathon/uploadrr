@@ -555,6 +555,36 @@ def test_push_file_counts_failure_when_post_work_raises(monkeypatch, tmp_path):
     assert _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial) == before + 1
 
 
+def test_push_file_counts_failure_when_get_device_raises(monkeypatch, tmp_path):
+    # No Device object exists yet when get_device() itself fails (device
+    # unplugged, adb server down, ...), so the failure counter must use the
+    # input `serial` directly rather than `device.serial`.
+    tar = _make_tar(tmp_path, "g.tar", [("p1.jpg", b"data")])
+    monkeypatch.setattr(
+        "uploadrr.adb.get_device",
+        MagicMock(side_effect=AdbError("adb server unreachable for test_serial")),
+    )
+    before = _labeled(metrics.PUSH_FAILURES_TOTAL, serial="test_serial")
+
+    with pytest.raises(AdbError, match="unreachable"):
+        push_file("test_serial", str(tar))
+
+    assert tar.exists()
+    assert _labeled(metrics.PUSH_FAILURES_TOTAL, serial="test_serial") == before + 1
+
+
+def test_push_file_counts_failure_when_free_space_check_raises(monkeypatch, tmp_path):
+    tar = _make_tar(tmp_path, "h.tar", [("p1.jpg", b"x" * 100_000)])
+    raw = FakeRaw({"df -k": (DF_LOW, 0)})
+    monkeypatch.setattr("uploadrr.adb.get_device", lambda s: Device(raw))
+    before = _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial)
+
+    with pytest.raises(AdbError, match="insufficient free space"):
+        push_file("test_serial", str(tar))
+
+    assert _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial) == before + 1
+
+
 def test_push_file_creates_camera_dir_before_checking_free_space(monkeypatch, tmp_path):
     # `df` on a path that doesn't exist yet fails, so mkdir -p must run first -
     # otherwise a fresh device (no /sdcard/DCIM yet) could never get past this.

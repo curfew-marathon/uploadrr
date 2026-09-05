@@ -256,24 +256,25 @@ def push_file(serial, file):
     """Push, validate, and extract one archive on `serial`, then post-process."""
     logger.info("Starting transfer of %s to device %s", file, serial)
     names = _archive_members(file)  # validated locally before anything is pushed
-    device = get_device(serial)
-
-    pre_work(device)
-    file_size = os.stat(file).st_size
-    logger.debug("File size: %d bytes", file_size)
-
-    file_dest = C.DOWNLOAD + os.path.basename(file)
-    q_dest = shlex.quote(file_dest)
-    q_camera = shlex.quote(C.CAMERA)
-
-    # Create the extraction target before checking free space on it: on a
-    # fresh device /sdcard/DCIM may not exist yet, and `df` on a missing path
-    # fails, which would otherwise block every transfer forever.
-    device.sh(f"mkdir -p {q_camera}")
-    verify_free_space(device, file_size)
 
     try:
-        with metrics.PUSH_SECONDS.labels(serial=device.serial).time():
+        device = get_device(serial)
+
+        pre_work(device)
+        file_size = os.stat(file).st_size
+        logger.debug("File size: %d bytes", file_size)
+
+        file_dest = C.DOWNLOAD + os.path.basename(file)
+        q_dest = shlex.quote(file_dest)
+        q_camera = shlex.quote(C.CAMERA)
+
+        # Create the extraction target before checking free space on it: on a
+        # fresh device /sdcard/DCIM may not exist yet, and `df` on a missing
+        # path fails, which would otherwise block every transfer forever.
+        device.sh(f"mkdir -p {q_camera}")
+        verify_free_space(device, file_size)
+
+        with metrics.PUSH_SECONDS.labels(serial=serial).time():
             try:
                 logger.info(
                     "Pushing file to device %s: %s -> %s",
@@ -308,10 +309,10 @@ def push_file(serial, file):
 
             post_work(device, scanned)
     except AdbError:
-        metrics.PUSH_FAILURES_TOTAL.labels(serial=device.serial).inc()
+        metrics.PUSH_FAILURES_TOTAL.labels(serial=serial).inc()
         raise
 
-    logger.info("Successfully completed transfer to device %s", device.serial)
+    logger.info("Successfully completed transfer to device %s", serial)
 
 
 def pre_work(device):
