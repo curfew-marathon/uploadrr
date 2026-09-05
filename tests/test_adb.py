@@ -36,11 +36,12 @@ def _histogram_count(histogram, **labels):
 class _FakeSyncConn:
     """Stands in for the ppadb Sync connection that `Device.push` owns."""
 
-    def __init__(self, behavior, recorder):
+    def __init__(self, behavior, recorder, raise_on_close=None):
         self.socket = MagicMock()
         self.behavior = behavior
         self.recorder = recorder
         self.closed = threading.Event()
+        self._raise_on_close = raise_on_close
 
     def __enter__(self):
         return self
@@ -51,6 +52,8 @@ class _FakeSyncConn:
 
     def close(self):
         self.closed.set()
+        if self._raise_on_close is not None:
+            raise self._raise_on_close
 
 
 class _FakeSync:
@@ -134,6 +137,10 @@ class FakeRaw:
         # real ppadb's Transport.shell, which hands the connection to
         # `handler` and lets read_all() raise before anything is closed).
         self.raise_on_read = None
+        # Test hook: an exception instance for the next sync connection's
+        # close() to raise, to exercise Device.push's cancellation path when
+        # tearing down the socket itself fails.
+        self.raise_on_close = None
 
     def shell(self, cmd, handler=None, timeout=None):
         real = cmd.rsplit(_SPLIT, 1)[0]
@@ -155,7 +162,7 @@ class FakeRaw:
         return result.decode("utf-8")
 
     def sync(self):
-        conn = _FakeSyncConn(self.push_behavior, self.pushed)
+        conn = _FakeSyncConn(self.push_behavior, self.pushed, self.raise_on_close)
         self.sync_conns.append(conn)
         return conn
 
@@ -264,6 +271,21 @@ def test_push_closes_connection_and_raises_when_worker_never_finishes(
 
     # The stalled worker was forced dead, not abandoned, before push() raised.
     assert raw.sync_conns[0].closed.is_set()
+
+
+def test_push_raises_deadline_error_even_if_cancel_close_fails(monkeypatch, tmp_path):
+    # A secondary error from closing the socket during cancellation must not
+    # mask the deadline AdbError - that's the failure that actually happened
+    # from the caller's point of view.
+    f = tmp_path / "a.tar"
+    f.write_bytes(b"x" * 4096)
+    monkeypatch.setattr(C, "PUSH_TIMEOUT_FLOOR", 0.2)
+    monkeypatch.setattr(C, "PUSH_MIN_BYTES_PER_SEC", 10**12)
+    raw = FakeRaw(push_behavior=_push_stall_until_closed)
+    raw.raise_on_close = OSError("bad file descriptor")
+
+    with pytest.raises(AdbError, match="exceeded"):
+        Device(raw).push(str(f), "/sdcard/Download/a.tar")
 
 
 def test_push_logs_error_when_worker_ignores_close(monkeypatch, tmp_path, caplog):
@@ -510,6 +532,27 @@ def test_push_file_happy_path_scans_extracted_files(monkeypatch, tmp_path):
     assert _histogram_count(metrics.PUSH_SECONDS, serial=raw.serial) == before_seconds + 1
     # A successful push must not also count as a failure.
     assert _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial) == before_failures
+
+
+def test_push_file_counts_failure_when_post_work_raises(monkeypatch, tmp_path):
+    # A media-scan dispatch failure (surfaced via post_work) happens after a
+    # successful push+extract, but must still count as a transfer failure -
+    # otherwise it's invisible in metrics even though the caller keeps the
+    # source archive for retry.
+    tar = _make_tar(tmp_path, "f.tar", [("p1.jpg", b"data")])
+    raw = FakeRaw({"df -k": (DF_OK, 0)})
+    monkeypatch.setattr("uploadrr.adb.get_device", lambda s: Device(raw))
+    monkeypatch.setattr(
+        "uploadrr.adb.post_work",
+        MagicMock(side_effect=AdbCommandError("am broadcast", 1, "failed")),
+    )
+    before = _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial)
+
+    with pytest.raises(AdbCommandError):
+        push_file("test_serial", str(tar))
+
+    assert tar.exists()  # caller decides deletion; push_file never removed it
+    assert _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial) == before + 1
 
 
 def test_push_file_creates_camera_dir_before_checking_free_space(monkeypatch, tmp_path):

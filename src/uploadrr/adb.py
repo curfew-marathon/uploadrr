@@ -165,7 +165,10 @@ class Device:
         worker.join(overall)
 
         if worker.is_alive():
-            conn.close()  # tells a blocked send()/recv() to unblock via the socket timeout
+            # tells a blocked send()/recv() to unblock via the socket timeout;
+            # a secondary error here must not mask the deadline AdbError below.
+            with contextlib.suppress(Exception):
+                conn.close()
             # close() isn't a guaranteed synchronous cancellation, but the
             # socket timeout we set up front is: give it that long (plus a
             # margin) to actually take effect before deciding the worker is
@@ -302,11 +305,12 @@ def push_file(serial, file):
                         device.serial,
                         e,
                     )
+
+            post_work(device, scanned)
     except AdbError:
         metrics.PUSH_FAILURES_TOTAL.labels(serial=device.serial).inc()
         raise
 
-    post_work(device, scanned)
     logger.info("Successfully completed transfer to device %s", device.serial)
 
 
