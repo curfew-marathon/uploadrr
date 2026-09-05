@@ -14,10 +14,26 @@ FILES_PROCESSED_TOTAL = Counter(
     ["outcome"],  # "success" | "no_device_config" | "os_error" | "unexpected_error"
 )
 
-# Buckets sized for multi-GB archive transfers (PUSH_TIMEOUT_FLOOR=300,
-# EXTRACT_TIMEOUT=1800 in constants.py) - default prometheus_client buckets
-# top out at 10s, useless for either histogram below.
-_TRANSFER_SECONDS_BUCKETS = (5, 15, 30, 60, 120, 300, 600, 1200, 1800, float("inf"))
+# Buckets sized from Device.push()'s own deadline math: total_bytes /
+# PUSH_MIN_BYTES_PER_SEC (262144 B/s in constants.py). A 2 GiB archive at that
+# throughput floor legitimately takes ~8192s (~137 min) to push while still
+# succeeding, so buckets must extend well past a 1800s ceiling or valid slow
+# transfers collapse into +Inf.
+_TRANSFER_SECONDS_BUCKETS = (
+    5,
+    15,
+    30,
+    60,
+    120,
+    300,
+    600,
+    1200,
+    1800,
+    3600,
+    7200,
+    14400,
+    float("inf"),
+)
 
 FILE_PROCESSING_SECONDS = Histogram(
     "uploadrr_file_processing_seconds",
