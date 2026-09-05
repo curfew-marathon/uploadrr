@@ -80,14 +80,30 @@ class Device:
         Unlike ``ppadb``'s ``shell``, this raises ``AdbCommandError`` when the
         command exits non-zero (with ``check=True``) and ``AdbError`` on a
         transport error or timeout.
+
+        ppadb's own ``shell()`` only closes its connection *after*
+        ``read_all()`` returns, so a timeout there would otherwise leak the
+        socket. Passing a ``handler`` hands the raw connection back instead of
+        letting ppadb read/close it, so the read can be owned here under a
+        ``try/finally`` that always closes it.
         """
         wrapped = f"{cmd}\necho {_RC_MARKER}$?"
+        raw_out = None
+
+        def _read_and_close(conn):
+            nonlocal raw_out
+            try:
+                raw_out = conn.read_all().decode("utf-8")
+            finally:
+                with contextlib.suppress(Exception):
+                    conn.close()
+
         try:
-            out = self._raw.shell(wrapped, timeout=timeout)
+            self._raw.shell(wrapped, handler=_read_and_close, timeout=timeout)
         except Exception as e:  # socket timeout, connection reset, ppadb RuntimeError
             raise AdbError(f"shell `{cmd}` failed on {self.serial}: {e}") from e
 
-        out = out or ""
+        out = raw_out or ""
         m = _RC_RE.search(out)
         if m is None:
             raise AdbError(
@@ -107,8 +123,11 @@ class Device:
         after the caller cleaned it up. Owning the connection lets a stall be
         torn down for real: the socket gets a timeout that bounds every
         send/recv in the data phase, and if the worker is still alive after
-        the overall deadline its socket is closed and it is joined before
-        raising, so it is guaranteed dead by the time this call returns.
+        the overall deadline its socket is closed and it is joined for as
+        long as that same timeout could take to unblock it, so by the time
+        this call returns the worker is confirmed dead - or, in the abnormal
+        case that it still isn't, that leak is logged loudly instead of
+        silently claimed away.
         """
         stall_timeout = stall_timeout or C.PUSH_STALL_TIMEOUT
         total = os.path.getsize(src)
@@ -145,8 +164,20 @@ class Device:
         worker.join(overall)
 
         if worker.is_alive():
-            conn.close()  # force the blocked worker to unwind
-            worker.join(10)
+            conn.close()  # tells a blocked send()/recv() to unblock via the socket timeout
+            # close() isn't a guaranteed synchronous cancellation, but the
+            # socket timeout we set up front is: give it that long (plus a
+            # margin) to actually take effect before deciding the worker is
+            # stuck for real.
+            worker.join(stall_timeout + C.PUSH_CANCEL_GRACE)
+            if worker.is_alive():
+                logger.error(
+                    "Device %s: push worker for %s did not exit after being "
+                    "cancelled; abandoning it (a stale adb connection may "
+                    "leak until this process exits)",
+                    self.serial,
+                    dest,
+                )
             # Closing the socket may also land a secondary error in
             # result["err"], but the deadline is what actually happened from
             # the caller's point of view, so it takes precedence.

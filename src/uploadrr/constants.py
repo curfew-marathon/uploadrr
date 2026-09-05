@@ -18,3 +18,8 @@ EXTRACT_TIMEOUT = 1800  # on-device `tar -xf` of a multi-GB archive
 PUSH_STALL_TIMEOUT = 120
 PUSH_MIN_BYTES_PER_SEC = 262144  # ~0.25 MB/s
 PUSH_TIMEOUT_FLOOR = 300
+
+# After a stalled push's socket is closed, how much longer (on top of its own
+# stall timeout, the mechanism actually expected to unblock it) to wait before
+# giving up on the worker thread and just logging the leak.
+PUSH_CANCEL_GRACE = 5

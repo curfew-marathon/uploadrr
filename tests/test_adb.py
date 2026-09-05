@@ -1,15 +1,26 @@
 import io
 import logging
-import sys
 import tarfile
 import threading
-import types
 from unittest.mock import MagicMock
 
 import pytest
 
-sys.modules['ppadb'] = MagicMock()
-sys.modules['ppadb.client'] = MagicMock()
+from uploadrr import constants as C
+from uploadrr.adb import (
+    _RC_MARKER,
+    AdbCommandError,
+    AdbError,
+    Device,
+    _archive_members,
+    _ensure_interactive,
+    _interactive,
+    _media_scan,
+    get_device,
+    pre_work,
+    push_file,
+    verify_free_space,
+)
 
 
 class _FakeSyncConn:
@@ -45,36 +56,14 @@ class _FakeSync:
         self.conn.behavior(self.conn, src, dest)
 
 
-# `uploadrr.adb` imports `Sync` from `ppadb.sync` at module level, so this
-# needs to be registered before `uploadrr.adb` is first imported below.
-_fake_sync_module = types.ModuleType("ppadb.sync")
-_fake_sync_module.Sync = _FakeSync  # type: ignore[attr-defined]
-sys.modules["ppadb.sync"] = _fake_sync_module
+@pytest.fixture(autouse=True)
+def _patch_sync(monkeypatch):
+    """Every Device.push test drives ppadb's Sync through `_FakeSync`. Patching
+    the name inside uploadrr.adb (rather than shadowing `ppadb` itself in
+    sys.modules) keeps the real ppadb package importable everywhere else in
+    the suite, regardless of which test file/order runs first."""
+    monkeypatch.setattr("uploadrr.adb.Sync", _FakeSync)
 
-from uploadrr import constants as C
-from uploadrr.adb import (
-    _RC_MARKER,
-    AdbCommandError,
-    AdbError,
-    Device,
-    _archive_members,
-    _ensure_interactive,
-    _interactive,
-    _media_scan,
-    get_device,
-    pre_work,
-    push_file,
-    verify_free_space,
-)
-
-# The fakes above only existed to satisfy uploadrr.adb's own module-level
-# imports; it now holds its own references (AdbClient, Sync), so don't leave
-# process-global fakes in sys.modules for the rest of the pytest session -
-# any test module that imports uploadrr.adb/.files/.config later, or a bare
-# `import ppadb` anywhere else, should see the real package again.
-del sys.modules["ppadb"]
-del sys.modules["ppadb.client"]
-del sys.modules["ppadb.sync"]
 
 _SPLIT = "\necho " + _RC_MARKER
 
@@ -102,18 +91,41 @@ def _push_boom(conn, src, dest):
     raise RuntimeError("device offline")
 
 
+class _FakeShellConn:
+    """Stands in for the ppadb connection handed to Device.sh's `handler`."""
+
+    def __init__(self, output, close_calls, raise_on_read=None):
+        self._output = output.encode("utf-8")
+        self._close_calls = close_calls
+        self._raise_on_read = raise_on_read
+
+    def read_all(self):
+        if self._raise_on_read is not None:
+            raise self._raise_on_read
+        return self._output
+
+    def close(self):
+        self._close_calls.append(True)
+
+
 class FakeRaw:
     """Stand-in for a ppadb device: records shell calls, replays canned output."""
 
     def __init__(self, responses=None, push_behavior=_push_success):
         self.serial = "test_serial"
         self.shell_calls = []
+        self.shell_close_calls = []
         self.pushed = []
         self.sync_conns = []
         self._responses = responses or {}
         self.push_behavior = push_behavior
+        # Test hook: an exception instance for the next shell()'s read_all()
+        # to raise, to exercise Device.sh's close-on-failure path (mirrors
+        # real ppadb's Transport.shell, which hands the connection to
+        # `handler` and lets read_all() raise before anything is closed).
+        self.raise_on_read = None
 
-    def shell(self, cmd, timeout=None):
+    def shell(self, cmd, handler=None, timeout=None):
         real = cmd.rsplit(_SPLIT, 1)[0]
         self.shell_calls.append(real)
         body, rc = "", 0
@@ -122,7 +134,15 @@ class FakeRaw:
                 body, rc = value if isinstance(value, tuple) else (value, 0)
                 break
         sep = "\n" if body else ""
-        return f"{body}{sep}{_RC_MARKER}{rc}\n"
+        output = f"{body}{sep}{_RC_MARKER}{rc}\n"
+        conn = _FakeShellConn(output, self.shell_close_calls, self.raise_on_read)
+
+        if handler is not None:
+            handler(conn)
+            return None
+        result = conn.read_all()
+        conn.close()
+        return result.decode("utf-8")
 
     def sync(self):
         conn = _FakeSyncConn(self.push_behavior, self.pushed)
@@ -168,7 +188,12 @@ def test_sh_check_false_swallows_nonzero():
 
 def test_sh_missing_marker_raises_adberror():
     raw = FakeRaw()
-    raw.shell = lambda cmd, timeout=None: "no marker in here"
+
+    def shell_without_marker(cmd, handler=None, timeout=None):
+        conn = _FakeShellConn("no marker in here", raw.shell_close_calls)
+        handler(conn)
+
+    raw.shell = shell_without_marker
     with pytest.raises(AdbError, match="exit marker"):
         Device(raw).sh("whatever")
 
@@ -176,12 +201,23 @@ def test_sh_missing_marker_raises_adberror():
 def test_sh_transport_error_becomes_adberror():
     raw = FakeRaw()
 
-    def boom(cmd, timeout=None):
+    def boom(cmd, handler=None, timeout=None):
         raise RuntimeError("connection reset by peer")
 
     raw.shell = boom
     with pytest.raises(AdbError):
         Device(raw).sh("df")
+
+
+def test_sh_closes_connection_even_when_read_fails():
+    # Mirrors real ppadb's Transport.shell: the connection is handed to
+    # `handler` before read_all() runs, so a read failure must not skip the
+    # close (that's exactly the socket leak this fix addresses).
+    raw = FakeRaw()
+    raw.raise_on_read = TimeoutError("timed out")
+    with pytest.raises(AdbError, match="failed"):
+        Device(raw).sh("df")
+    assert raw.shell_close_calls == [True]
 
 
 # --- Device.push ---------------------------------------------------------------
@@ -216,6 +252,28 @@ def test_push_closes_connection_and_raises_when_worker_never_finishes(
 
     # The stalled worker was forced dead, not abandoned, before push() raised.
     assert raw.sync_conns[0].closed.is_set()
+
+
+def test_push_logs_error_when_worker_ignores_close(monkeypatch, tmp_path, caplog):
+    # Abnormal case: the worker doesn't unblock even after conn.close(). push()
+    # must not claim it's confirmed dead - it should wait out the same
+    # mechanism it relies on (stall_timeout) and then log the leak loudly.
+    caplog.set_level(logging.ERROR)
+    f = tmp_path / "a.tar"
+    f.write_bytes(b"x" * 4096)
+    monkeypatch.setattr(C, "PUSH_TIMEOUT_FLOOR", 0.05)
+    monkeypatch.setattr(C, "PUSH_MIN_BYTES_PER_SEC", 10**12)
+    monkeypatch.setattr(C, "PUSH_CANCEL_GRACE", 0.05)
+
+    def _push_ignore_close(conn, src, dest):
+        threading.Event().wait()  # blocks forever, ignoring conn.closed
+
+    raw = FakeRaw(push_behavior=_push_ignore_close)
+
+    with pytest.raises(AdbError, match="exceeded"):
+        Device(raw).push(str(f), "/sdcard/Download/a.tar", stall_timeout=0.05)
+
+    assert "did not exit after being cancelled" in caplog.text
 
 
 def test_push_propagates_worker_error(tmp_path):
