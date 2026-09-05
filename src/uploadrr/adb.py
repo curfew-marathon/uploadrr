@@ -12,6 +12,7 @@ from ppadb.client import Client as AdbClient
 from ppadb.sync import Sync
 
 from uploadrr import constants as C
+from uploadrr import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +165,10 @@ class Device:
         worker.join(overall)
 
         if worker.is_alive():
-            conn.close()  # tells a blocked send()/recv() to unblock via the socket timeout
+            # tells a blocked send()/recv() to unblock via the socket timeout;
+            # a secondary error here must not mask the deadline AdbError below.
+            with contextlib.suppress(Exception):
+                conn.close()
             # close() isn't a guaranteed synchronous cancellation, but the
             # socket timeout we set up front is: give it that long (plus a
             # margin) to actually take effect before deciding the worker is
@@ -189,6 +193,8 @@ class Device:
             raise AdbError(
                 f"push {src} -> {self.serial}:{dest} failed: {result['err']}"
             ) from result["err"]
+
+        metrics.PUSH_BYTES_TOTAL.labels(serial=self.serial).inc(total)
 
 
 def verify_free_space(device, file_size):
@@ -250,48 +256,63 @@ def push_file(serial, file):
     """Push, validate, and extract one archive on `serial`, then post-process."""
     logger.info("Starting transfer of %s to device %s", file, serial)
     names = _archive_members(file)  # validated locally before anything is pushed
-    device = get_device(serial)
-
-    pre_work(device)
-    file_size = os.stat(file).st_size
-    logger.debug("File size: %d bytes", file_size)
-
-    file_dest = C.DOWNLOAD + os.path.basename(file)
-    q_dest = shlex.quote(file_dest)
-    q_camera = shlex.quote(C.CAMERA)
-
-    # Create the extraction target before checking free space on it: on a
-    # fresh device /sdcard/DCIM may not exist yet, and `df` on a missing path
-    # fails, which would otherwise block every transfer forever.
-    device.sh(f"mkdir -p {q_camera}")
-    verify_free_space(device, file_size)
 
     try:
-        logger.info(
-            "Pushing file to device %s: %s -> %s", device.serial, file, file_dest
-        )
-        device.push(file, file_dest)
+        device = get_device(serial)
 
-        logger.info("Extracting archive on device %s: %s", device.serial, file_dest)
-        device.sh(f"tar -xf {q_dest} -C {q_camera}", timeout=C.EXTRACT_TIMEOUT)
+        pre_work(device)
+        file_size = os.stat(file).st_size
+        logger.debug("File size: %d bytes", file_size)
 
-        scanned = [C.CAMERA + n for n in names]
-        logger.info(
-            "Extracted %d files to %s on device %s",
-            len(scanned),
-            C.CAMERA,
-            device.serial,
-        )
-    finally:
-        try:
-            device.sh(f"rm -f {q_dest}", check=True)
-        except AdbError as e:
-            logger.warning(
-                "Could not remove %s on device %s: %s", file_dest, device.serial, e
-            )
+        file_dest = C.DOWNLOAD + os.path.basename(file)
+        q_dest = shlex.quote(file_dest)
+        q_camera = shlex.quote(C.CAMERA)
 
-    post_work(device, scanned)
-    logger.info("Successfully completed transfer to device %s", device.serial)
+        # Create the extraction target before checking free space on it: on a
+        # fresh device /sdcard/DCIM may not exist yet, and `df` on a missing
+        # path fails, which would otherwise block every transfer forever.
+        device.sh(f"mkdir -p {q_camera}")
+        verify_free_space(device, file_size)
+
+        with metrics.PUSH_SECONDS.labels(serial=serial).time():
+            try:
+                logger.info(
+                    "Pushing file to device %s: %s -> %s",
+                    device.serial,
+                    file,
+                    file_dest,
+                )
+                device.push(file, file_dest)
+
+                logger.info(
+                    "Extracting archive on device %s: %s", device.serial, file_dest
+                )
+                device.sh(f"tar -xf {q_dest} -C {q_camera}", timeout=C.EXTRACT_TIMEOUT)
+
+                scanned = [C.CAMERA + n for n in names]
+                logger.info(
+                    "Extracted %d files to %s on device %s",
+                    len(scanned),
+                    C.CAMERA,
+                    device.serial,
+                )
+            finally:
+                try:
+                    device.sh(f"rm -f {q_dest}", check=True)
+                except AdbError as e:
+                    logger.warning(
+                        "Could not remove %s on device %s: %s",
+                        file_dest,
+                        device.serial,
+                        e,
+                    )
+
+            post_work(device, scanned)
+    except AdbError:
+        metrics.PUSH_FAILURES_TOTAL.labels(serial=serial).inc()
+        raise
+
+    logger.info("Successfully completed transfer to device %s", serial)
 
 
 def pre_work(device):
