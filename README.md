@@ -50,19 +50,23 @@ python src/launch.py
 
 #### Docker Compose (recommended)
 
-A [`docker-compose.yml`](docker-compose.yml) is included. It health-checks the
-metrics endpoint and reads every environment-specific value from `.env` (all with
-defaults, so an empty `.env` still brings the stack up).
+A [`docker-compose.yml`](docker-compose.yml) is included. It reads the host paths,
+`PUID`/`PGID`/`TZ`, and the optional `LOG_LEVEL` / `METRICS_*` settings from `.env`,
+each with a default, so an empty `.env` still brings the stack up.
 
 1. Create your environment file:
 ```bash
 cp .env.example .env
 $EDITOR .env
 ```
-Set `UPLOADRR_DATA_DIR` to the host directory importrr writes tar files into (and
-`UPLOADRR_CONFIG_DIR` if your `config.ini` lives outside `./config`). Everything
-else is optional. `.env` is gitignored, and no real paths are committed - the
-compose file falls back to `./config` and a throwaway named volume.
+Set `UPLOADRR_DATA_DIR` to the host directory that is mounted at `/data`: it must be
+the parent of the `album_dir` / `archive_dir` roots in your `config.ini`. With the
+shipped `config/config.ini` (both roots are `/data`) that is the directory uploadrr
+watches directly; if your `config.ini` uses `/data/archives`, point
+`UPLOADRR_DATA_DIR` at the directory *containing* `archives/`, not at `archives/`
+itself. Set `UPLOADRR_CONFIG_DIR` if your `config.ini` lives outside `./config`.
+Everything else is optional. `.env` is gitignored and no real paths are committed;
+the compose file falls back to a repository-local `./config` and `./data` bind mount.
 
 2. Set up the host adb server (see [ADB Server Setup](#adb-server-setup)).
 
@@ -70,7 +74,7 @@ compose file falls back to `./config` and a throwaway named volume.
 ```bash
 ./start.sh          # ensures the adb server is up, then `docker compose up -d`
 ./start.sh --pull   # update to the latest image first
-./start.sh --logs   # follow logs once healthy
+./start.sh --logs   # follow logs once it is up
 ./stop.sh           # `docker compose down` (leaves the adb server running)
 ./stop.sh --adb     # also stops the adb server
 ```
@@ -155,8 +159,8 @@ Create a `config.ini` file in the root directory or in `/config/config.ini` with
 
 ```ini
 [global]
-album_dir = /data/albums
-archive_dir = /data/archives
+album_dir = /data
+archive_dir = /data
 
 [home]
 serial = ABC123DEF456
@@ -168,13 +172,16 @@ import_dir = corporate
 ```
 
 `album_dir` and `archive_dir` are paths **as seen inside the container**. With the
-provided `docker-compose.yml` the host directory `UPLOADRR_DATA_DIR` is bound to
-`/data`, so these should be subdirectories of `/data`.
+provided `docker-compose.yml`, `UPLOADRR_DATA_DIR` is bound to `/data`; the shipped
+`config/config.ini` uses `/data` for both roots so uploadrr watches that directory
+directly. Split them into subdirectories (e.g. `/data/albums`, `/data/archives`)
+only if your host keeps albums and archives apart, and point `UPLOADRR_DATA_DIR` at
+their common parent.
 
 ### Configuration Parameters
 
-- **`album_dir`**: Root directory for album storage (container path, e.g. `/data/albums`)
-- **`archive_dir`**: Root directory where tar archives are monitored (container path, e.g. `/data/archives`)
+- **`album_dir`**: Root directory for album storage (container path, e.g. `/data`)
+- **`archive_dir`**: Root directory where tar archives are monitored (container path, e.g. `/data`)
 - **`import_dir`**: Comma-separated list of subdirectories under `album_dir/[section_name]/` where photos are placed for importrr to process. Not used by uploadrr directly - uploadrr watches `archive_dir/[section_name]/` for the tar files that importrr produces.
 - **`serial`**: Android device serial number (get with `adb devices`)
 
@@ -187,8 +194,8 @@ The configuration uses a section-based approach:
   - `import_dir`: Subdirectories under `album_dir/[section_name]/` where importrr picks up photos to process and archive
 
 For example, with the configuration above:
-- importrr reads photos from `/data/albums/home/personal/` and `/data/albums/home/photos/`, archives them as tar files to `/data/archives/home/`
-- uploadrr watches `/data/archives/home/` and `/data/archives/work/` and pushes tar files to the matching device
+- importrr reads photos from `/data/home/personal/` and `/data/home/photos/`, archives them as tar files to `/data/home/`
+- uploadrr watches `/data/home/` and `/data/work/` and pushes tar files to the matching device
 
 ### Getting Device Serial Numbers
 

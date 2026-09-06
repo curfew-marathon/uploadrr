@@ -6,7 +6,7 @@
 #   ./start.sh              Ensure the host adb server is running, then start the stack
 #   ./start.sh --pull       Pull the latest image before starting
 #   ./start.sh --no-adb     Skip the adb server check (it is managed elsewhere)
-#   ./start.sh --logs       Follow container logs once it is healthy
+#   ./start.sh --logs       Follow container logs once it is up
 #
 # Flags may be combined, e.g. ./start.sh --pull --logs
 #
@@ -54,7 +54,7 @@ docker compose config --quiet || { err "docker-compose.yml failed validation."; 
 # ── host adb server ──────────────────────────────────────────────────────────
 if [ "$CHECK_ADB" = "1" ]; then
   if systemctl --user cat "$ADB_SERVICE" >/dev/null 2>&1; then
-    systemctl --user start "$ADB_SERVICE"   # no-op if already running
+    systemctl --user start "$ADB_SERVICE" || true   # no-op if already running; real check below
     if systemctl --user is-active --quiet "$ADB_SERVICE"; then
       log "adb server: $ADB_SERVICE active"
     else
@@ -81,25 +81,28 @@ fi
 log "Bringing uploadrr up..."
 docker compose up -d --remove-orphans
 
-# ── wait for health ─────────────────────────────────────────────────────────
-log "Waiting for the container to report healthy..."
-deadline=$(( $(date +%s) + 90 ))
-while :; do
-  state="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' uploadrr 2>/dev/null || echo missing)"
-  case "$state" in
-    healthy|running) break ;;
-    missing) warn "container 'uploadrr' not found - check 'docker compose ps'"; break ;;
-  esac
-  if [ "$(date +%s)" -ge "$deadline" ]; then
-    warn "still '$state' after 90s - check 'docker compose logs'"; break
-  fi
-  sleep 3
-done
+# ── verify it stays up (no healthcheck; catch a startup crash loop) ─────────
+log "Checking the container starts cleanly..."
+_state()    { docker inspect -f '{{.State.Status}}' uploadrr 2>/dev/null || echo missing; }
+_restarts() { docker inspect -f '{{.RestartCount}}' uploadrr 2>/dev/null || echo 0; }
+
+sleep 3
+if [ "$(_state)" != "running" ]; then
+  err "container is '$(_state)' just after start - check 'docker compose logs'"
+  exit 1
+fi
+r1="$(_restarts)"
+sleep 7
+if [ "$(_restarts)" -gt "$r1" ] || [ "$(_state)" != "running" ]; then
+  err "container is restart-looping (crash on startup) - check 'docker compose logs'"
+  exit 1
+fi
+log "Container up."
 
 # ── status ──────────────────────────────────────────────────────────────────
 echo
 docker compose ps
-metrics_port="$(grep -E '^[[:space:]]*METRICS_PORT=' .env 2>/dev/null | tail -n1 | cut -d= -f2 || true)"
+metrics_port="$(docker compose exec -T uploadrr printenv METRICS_PORT 2>/dev/null | tr -d '\r' || true)"
 adb_line="adb not on PATH"
 if command -v adb >/dev/null 2>&1; then
   adb_line="$(adb devices | tail -n +2 | sed '/^[[:space:]]*$/d' | tr -s ' \t' ' ' | paste -sd', ' - || true)"

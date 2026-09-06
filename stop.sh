@@ -33,7 +33,9 @@ docker info >/dev/null 2>&1            || { err "Docker daemon is not running.";
 docker compose version >/dev/null 2>&1 || { err "'docker compose' v2 is required."; exit 1; }
 
 DOWN_ARGS=(down --remove-orphans)
-[ "$DROP_IMAGES" = "1" ] && DOWN_ARGS+=(--rmi local)
+# --rmi all, not local: the service image is tagged (curfewmarathon/uploadrr:TAG),
+# and `--rmi local` only removes images that have no tag.
+[ "$DROP_IMAGES" = "1" ] && DOWN_ARGS+=(--rmi all)
 
 log "Stopping uploadrr..."
 docker compose "${DOWN_ARGS[@]}"
