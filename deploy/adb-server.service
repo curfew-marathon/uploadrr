@@ -1,0 +1,57 @@
+# systemd unit that keeps an adb server running for uploadrr.
+#
+# uploadrr's container has no adb binary of its own - it speaks to an adb
+# server over TCP (default 127.0.0.1:5037). If that server is not running,
+# every transfer fails with "adb server unreachable ... Connection refused"
+# and the tar files pile up waiting for retry. This unit makes the adb
+# server a supervised, boot-started service so a crash or a logout can't
+# leave uploadrr stranded.
+#
+# Install as a *user* service (recommended - adb then runs as your login
+# user and can read ~/.android/adbkey):
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/adb-server.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now adb-server.service
+#   sudo loginctl enable-linger "$USER"     # REQUIRED - see note below
+#
+# Or as a system service: copy to /etc/systemd/system/, add a "User=" line
+# under [Service], change WantedBy to multi-user.target, then
+# `sudo systemctl enable --now adb-server.service`.
+#
+# The `loginctl enable-linger` step is not optional for a user service.
+# Without it, systemd tears down your entire user manager (and this service
+# with it) the moment your last login session ends - so the adb server dies
+# on logout and does not come back until you log in again.
+
+[Unit]
+Description=ADB server for uploadrr
+Documentation=https://github.com/curfew-marathon/uploadrr
+
+[Service]
+Type=simple
+# Run the server in the foreground so systemd supervises the real process
+# and Restart= actually applies. `adb start-server` would fork and exit,
+# leaving systemd with nothing to watch.
+#
+# Adjust the path if adb is not in /usr/bin (e.g. /usr/local/bin/adb or an
+# unpacked platform-tools directory). If your adb rejects this argument
+# order, try: /usr/bin/adb -P 5037 server nodaemon
+#
+# ExecStartPre clears any stray forked server holding port 5037, which would
+# otherwise make the foreground server fail to bind and restart-loop.
+ExecStartPre=-/usr/bin/adb kill-server
+ExecStart=/usr/bin/adb -P 5037 nodaemon server
+
+# For containers on a bridge network instead of --net=host, add -a so the
+# server listens on all interfaces:
+#   ExecStart=/usr/bin/adb -a -P 5037 nodaemon server
+# This exposes full device control to anything that can reach port 5037 -
+# restrict it with a firewall rule.
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

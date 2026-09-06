@@ -3,7 +3,11 @@ FROM python:alpine
 # Set the stage
 LABEL maintainer="curfew-marathon"
 LABEL version="0.1.0"
-LABEL description="Docker Image for Uploadrr"]
+LABEL description="Docker Image for Uploadrr"
+
+# tzdata lets the TZ env var actually take effect in log timestamps;
+# alpine ships without it and would otherwise stay on UTC.
+RUN apk add --no-cache tzdata
 
 # Copy the Python app and install requirements
 COPY src /app

@@ -17,7 +17,8 @@ Uploadrr is an automated media file transfer tool that monitors archive director
 ## Prerequisites
 
 - Python 3.x
-- ADB (Android Debug Bridge) installed and accessible
+- ADB (Android Debug Bridge) installed and accessible. The Docker image does **not**
+  bundle adb - it talks to an adb server running on the host (see [ADB Server Setup](#adb-server-setup))
 - Android device(s) with:
   - USB debugging enabled
   - Connected via USB or wireless ADB
@@ -47,6 +48,37 @@ python src/launch.py
 
 ### Docker Installation
 
+#### Docker Compose (recommended)
+
+A [`docker-compose.yml`](docker-compose.yml) is included. It health-checks the
+metrics endpoint and reads every environment-specific value from `.env` (all with
+defaults, so an empty `.env` still brings the stack up).
+
+1. Create your environment file:
+```bash
+cp .env.example .env
+$EDITOR .env
+```
+Set `UPLOADRR_DATA_DIR` to the host directory importrr writes tar files into (and
+`UPLOADRR_CONFIG_DIR` if your `config.ini` lives outside `./config`). Everything
+else is optional. `.env` is gitignored, and no real paths are committed - the
+compose file falls back to `./config` and a throwaway named volume.
+
+2. Set up the host adb server (see [ADB Server Setup](#adb-server-setup)).
+
+3. Start and stop with the helper scripts:
+```bash
+./start.sh          # ensures the adb server is up, then `docker compose up -d`
+./start.sh --pull   # update to the latest image first
+./start.sh --logs   # follow logs once healthy
+./stop.sh           # `docker compose down` (leaves the adb server running)
+./stop.sh --adb     # also stops the adb server
+```
+Or drive compose directly: `docker compose up -d`, `docker compose logs -f`,
+`docker compose pull && docker compose up -d` to update.
+
+#### Docker run
+
 1. Pull the Docker image:
 ```bash
 docker pull curfewmarathon/uploadrr
@@ -55,8 +87,7 @@ docker pull curfewmarathon/uploadrr
 2. Run the container with appropriate volume mounts:
 ```bash
 docker run -v /path/to/config:/config \
-           -v /path/to/archives:/archives \
-           -v /path/to/albums:/albums \
+           -v /path/to/data:/data \
            --net=host \
            curfewmarathon/uploadrr
 ```
@@ -68,14 +99,64 @@ Alternatively, you can build the image yourself:
 docker build -t uploadrr .
 ```
 
+## ADB Server Setup
+
+The uploadrr container has **no adb binary of its own**. It uses a pure-Python adb
+client that connects to an adb **server** over TCP - by default `127.0.0.1:5037`,
+reachable because the container runs with `--net=host`. That server must be running
+on the host, or every transfer fails with:
+
+```
+adb server unreachable for <serial>: ERROR: connecting to 127.0.0.1:5037 [Errno 111] Connection refused
+```
+
+The Python client can only *use* an adb server; it can never *start* one. So if the
+host's adb server stops, uploadrr cannot recover on its own - the tar files simply
+accumulate and wait for retry until the server is back.
+
+### Recommended: run adb as a supervised service
+
+A ready-to-use systemd unit is provided at [`deploy/adb-server.service`](deploy/adb-server.service).
+Install it as a **user** service:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/adb-server.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now adb-server.service
+
+# REQUIRED: without linger, systemd stops your user manager (and this
+# service with it) when your last login session ends - the adb server
+# then dies on logout and only comes back on your next login.
+sudo loginctl enable-linger "$USER"
+```
+
+Verify it is running in the foreground (supervised), not just "exited":
+
+```bash
+systemctl --user status adb-server.service   # want: active (running)
+loginctl show-user "$USER" -p Linger          # want: Linger=yes
+adb devices                                   # target device should be listed
+```
+
+The unit runs `adb nodaemon server` in the foreground and sets `Restart=always`, so an
+adb crash or a version-mismatch kill self-heals within a few seconds. It can also be
+installed as a system service - see the comments in the unit file.
+
+### Manual alternative
+
+If you just run `adb start-server` by hand, be aware it will not survive a reboot, a
+crash, or (for a login-session server) your logout. Prefer the service above for any
+unattended deployment.
+
 ## Configuration
 
 Create a `config.ini` file in the root directory or in `/config/config.ini` with the following structure:
 
 ```ini
 [global]
-album_dir = /path/to/albums
-archive_dir = /path/to/archives
+album_dir = /data/albums
+archive_dir = /data/archives
 
 [home]
 serial = ABC123DEF456
@@ -86,10 +167,14 @@ serial = XYZ789GHI012
 import_dir = corporate
 ```
 
+`album_dir` and `archive_dir` are paths **as seen inside the container**. With the
+provided `docker-compose.yml` the host directory `UPLOADRR_DATA_DIR` is bound to
+`/data`, so these should be subdirectories of `/data`.
+
 ### Configuration Parameters
 
-- **`album_dir`**: Root directory for album storage (e.g., `/path/to/albums`)
-- **`archive_dir`**: Root directory where tar archives are monitored (e.g., `/path/to/archives`)
+- **`album_dir`**: Root directory for album storage (container path, e.g. `/data/albums`)
+- **`archive_dir`**: Root directory where tar archives are monitored (container path, e.g. `/data/archives`)
 - **`import_dir`**: Comma-separated list of subdirectories under `album_dir/[section_name]/` where photos are placed for importrr to process. Not used by uploadrr directly - uploadrr watches `archive_dir/[section_name]/` for the tar files that importrr produces.
 - **`serial`**: Android device serial number (get with `adb devices`)
 
@@ -99,11 +184,11 @@ The configuration uses a section-based approach:
 - **`[global]`**: Contains shared settings for album and archive root directories
 - **`[device_name]`**: Each device gets its own section (e.g., `[home]`, `[work]`) containing:
   - `serial`: The device's unique ADB serial number
-  - `import_dir`: Subdirectories under `album_dir/[section_name]/` on the host where importrr picks up photos to process and archive
+  - `import_dir`: Subdirectories under `album_dir/[section_name]/` where importrr picks up photos to process and archive
 
 For example, with the configuration above:
-- importrr reads photos from `/path/to/albums/home/personal/` and `/path/to/albums/home/photos/`, archives them as tar files to `/path/to/archives/home/`
-- uploadrr watches `/path/to/archives/home/` and `/path/to/archives/work/` and pushes tar files to the matching device
+- importrr reads photos from `/data/albums/home/personal/` and `/data/albums/home/photos/`, archives them as tar files to `/data/archives/home/`
+- uploadrr watches `/data/archives/home/` and `/data/archives/work/` and pushes tar files to the matching device
 
 ### Getting Device Serial Numbers
 
@@ -131,9 +216,21 @@ This will list all connected devices with their serial numbers.
 - **Failed Transfers**: Files that fail to process (due to storage issues, device unavailability, etc.) remain in the source directory
 - **Periodic Recovery**: Every 24 hours, the application performs a full directory scan to retry any failed files
 - **Storage Issues**: Automatically checks for sufficient free space before transfer
-- **Device Connectivity**: Handles ADB connection errors gracefully
+- **Device Connectivity**: Handles ADB connection errors gracefully; a lost device or a
+  stopped adb server surfaces as a per-file error and the file is retried later. Note
+  that uploadrr cannot restart a stopped adb server itself - see [ADB Server Setup](#adb-server-setup)
 - **File Processing**: Continues processing other files if one fails
 - **Configuration Errors**: Provides clear error messages for missing devices or configuration
+
+### Recovering a backlog after an adb outage
+
+Files stranded while the adb server was down are only re-queued on the next new tar or
+the 24-hour periodic scan. To reprocess them immediately, restart the container - on
+startup uploadrr scans the archive directories and queues every existing `.tar`:
+
+```bash
+docker restart <container-name>
+```
 
 ## File Processing Flow
 
