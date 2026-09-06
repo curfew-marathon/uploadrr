@@ -85,7 +85,7 @@ Or drive compose directly: `docker compose up -d`, `docker compose logs -f`,
 
 1. Pull the Docker image:
 ```bash
-docker pull curfewmarathon/uploadrr
+docker pull ghcr.io/curfew-marathon/uploadrr:latest
 ```
 
 2. Run the container with appropriate volume mounts:
@@ -93,7 +93,7 @@ docker pull curfewmarathon/uploadrr
 docker run -v /path/to/config:/config \
            -v /path/to/data:/data \
            --net=host \
-           curfewmarathon/uploadrr
+           ghcr.io/curfew-marathon/uploadrr:latest
 ```
 
 #### Building from Source
@@ -290,7 +290,7 @@ export LOG_LEVEL=DEBUG
 python src/launch.py
 
 # Docker example
-docker run -e LOG_LEVEL=DEBUG curfewmarathon/uploadrr
+docker run -e LOG_LEVEL=DEBUG ghcr.io/curfew-marathon/uploadrr:latest
 ```
 
 ### Log Format
@@ -319,7 +319,7 @@ Set these environment variables to control the metrics endpoint:
 
 ```bash
 # Docker example
-docker run -e METRICS_PORT=9200 curfewmarathon/uploadrr
+docker run -e METRICS_PORT=9200 ghcr.io/curfew-marathon/uploadrr:latest
 ```
 
 With `--net=host` (the mode this project documents for reaching the host's adb server), the
