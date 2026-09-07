@@ -110,7 +110,7 @@ if command -v adb >/dev/null 2>&1; then
 fi
 cat <<EOF
 
-  Metrics    http://localhost:${metrics_port:-9200}/metrics
+  Metrics    http://localhost:${metrics_port:-9120}/metrics
   adb        ${adb_line}
 
   Follow logs:     docker compose logs -f

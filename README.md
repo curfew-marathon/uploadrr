@@ -315,15 +315,15 @@ throughput, and failure rates.
 ### Configuration
 Set these environment variables to control the metrics endpoint:
 - `METRICS_ENABLED` (default `true`): set to `false` to disable the metrics server entirely
-- `METRICS_PORT` (default `9200`): port the `/metrics` endpoint listens on
+- `METRICS_PORT` (default `9120`): port the `/metrics` endpoint listens on
 
 ```bash
 # Docker example
-docker run -e METRICS_PORT=9200 ghcr.io/curfew-marathon/uploadrr:latest
+docker run -e METRICS_PORT=9120 ghcr.io/curfew-marathon/uploadrr:latest
 ```
 
 With `--net=host` (the mode this project documents for reaching the host's adb server), the
-metrics port is already reachable at `<host>:9200` directly - no `-p` mapping needed.
+metrics port is already reachable at `<host>:9120` directly - no `-p` mapping needed.
 
 ### Metrics Exposed
 | Metric | Type | Labels | Description |
