@@ -7,7 +7,7 @@
 # (README > ADB Server Setup) - ./start.sh brings it up before this stack.
 services:
   uploadrr:
-    image: curfewmarathon/uploadrr:${UPLOADRR_TAG:-latest}
+    image: ghcr.io/curfew-marathon/uploadrr:${UPLOADRR_TAG:-latest}
     container_name: uploadrr
     network_mode: host
     environment:
