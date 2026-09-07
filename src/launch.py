@@ -20,5 +20,5 @@ logging.getLogger("watchdog.observers.inotify_buffer").setLevel(logging.WARNING)
 
 if __name__ == "__main__":
     if os.getenv("METRICS_ENABLED", "true").lower() in ("1", "true", "yes"):
-        metrics.start(os.getenv("METRICS_PORT", "9200"))
+        metrics.start(os.getenv("METRICS_PORT", "9120"))
     files.launch()

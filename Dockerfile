@@ -15,7 +15,7 @@ COPY requirements.txt requirements.txt
 RUN pip3 install --no-cache-dir --root-user-action=ignore -r requirements.txt
 
 # Prometheus metrics endpoint (see METRICS_PORT)
-EXPOSE 9200
+EXPOSE 9120
 
 # Go for launch!
 CMD ["python3", "/app/launch.py"]
