@@ -70,6 +70,7 @@ fi
 log "Stopping the stack..."
 docker compose "${DOWN_ARGS[@]}"
 
+rm_failed=0
 if [ "$DROP_IMAGES" = "1" ]; then
   if [ -n "$FIRST_PARTY" ]; then
     log "Removing first-party images:"
@@ -77,6 +78,7 @@ if [ "$DROP_IMAGES" = "1" ]; then
     # shellcheck disable=SC2086
     if ! docker image rm $FIRST_PARTY; then
       warn "some images could not be removed (in use by another container?) - see above."
+      rm_failed=1
     fi
   else
     warn "no ghcr.io/curfew-marathon/* image in this project - nothing to remove."
@@ -97,3 +99,9 @@ log "Done."
 # >>> project-specific
 echo "  Any tar files left in the archive dirs are retried on the next ./start.sh."
 # <<< project-specific
+
+# The `down` succeeded; a non-zero exit here means only that a requested
+# --images removal did not complete, so a caller can detect it.
+if [ "$rm_failed" = "1" ]; then
+  exit 1
+fi
