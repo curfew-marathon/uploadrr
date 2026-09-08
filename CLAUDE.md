@@ -46,8 +46,8 @@ Matches CI (`.github/workflows/ci.yml`, Python 3.11):
 - `docker-compose.yml` reads host-specific values from a gitignored `.env`
   (template: `.env.example`). Never commit real host paths, timezones, or device
   serials.
-- `PUID` / `PGID` are passed through but currently do nothing (plain `python:alpine`
-  base, no s6 init); the process runs as root.
+- The process runs as root (plain `python:alpine` base, no s6 init). `PUID` / `PGID`
+  are not honoured and are not in the compose file or `.env.example`.
 
 ## Conventions
 
