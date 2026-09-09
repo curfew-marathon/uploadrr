@@ -24,13 +24,17 @@ services:
       - METRICS_ENABLED=${METRICS_ENABLED:-true}
       - METRICS_PORT=${METRICS_PORT:-9120}
     healthcheck:
-      # "healthy" = the watcher process is up and serving /metrics. busybox wget
-      # + /bin/sh ship in the python:alpine base. The guard mirrors src/launch.py
-      # exactly (METRICS_ENABLED in {1,true,yes}); with metrics off there is
-      # nothing to probe, so the check passes. $$ is a literal $ for the container
-      # shell. network_mode: host, so 127.0.0.1:METRICS_PORT is the host loopback
-      # where start_http_server bound.
-      test: ["CMD-SHELL", "v=$$(echo \"$${METRICS_ENABLED:-true}\" | tr 'A-Z' 'a-z'); case \"$$v\" in 1|true|yes) wget -q -O - \"http://127.0.0.1:$${METRICS_PORT:-9120}/metrics\" >/dev/null 2>&1 || exit 1 ;; *) exit 0 ;; esac"]
+      # "healthy" = the process is up and serving its OWN metrics (not "actively
+      # watching" - metrics.start() precedes observer.start() by a sub-second in
+      # src/launch.py, and a real startup failure is a crash that start.sh's
+      # wait_for_health catches via status != running). busybox wget + /bin/sh
+      # ship in the python:alpine base. The guard mirrors src/launch.py exactly
+      # (METRICS_ENABLED in {1,true,yes}); with metrics off there is nothing to
+      # probe, so the check passes. The response is grepped for an uploadrr_*
+      # metric: network_mode: host means an unrelated /metrics listener already
+      # on this port would otherwise satisfy a bare HTTP 200 (metrics.start()
+      # swallows the bind collision). $$ is a literal $ for the container shell.
+      test: ["CMD-SHELL", "v=$$(echo \"$${METRICS_ENABLED:-true}\" | tr 'A-Z' 'a-z'); case \"$$v\" in 1|true|yes) wget -q -O - \"http://127.0.0.1:$${METRICS_PORT:-9120}/metrics\" 2>/dev/null | grep -q '^uploadrr_' || exit 1 ;; *) exit 0 ;; esac"]
       interval: 30s
       timeout: 5s
       retries: 3

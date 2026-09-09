@@ -80,6 +80,7 @@ the compose file falls back to a repository-local `./config` and `./data` bind m
 ./stop.sh           # `docker compose down` (leaves the adb server running)
 ./stop.sh --adb     # also stops the adb server
 ./stop.sh --images  # also removes the built/pulled image
+./stop.sh --volumes # also removes Compose volumes after a prompt (--yes skips it)
 ```
 Default `./start.sh` builds from source so you run exactly what is in your tree;
 `--pull` is the explicit opt-in to the published
@@ -104,10 +105,13 @@ docker run -v /path/to/config:/config \
 
 #### Building from Source
 
-Alternatively, you can build the image yourself:
+Alternatively, build the image yourself under the name Compose expects:
 ```bash
-docker build -t uploadrr .
+docker compose build
 ```
+Use `docker compose build`, not `docker build -t uploadrr .`: the compose file
+references `ghcr.io/curfew-marathon/uploadrr:${UPLOADRR_TAG:-latest}`, so a plain
+`uploadrr:latest` tag would not be picked up by `./start.sh --no-build`.
 
 ## ADB Server Setup
 

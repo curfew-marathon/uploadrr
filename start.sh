@@ -79,15 +79,21 @@ for arg in "$@"; do
     # >>> project-specific
     --no-adb)    CHECK_ADB=0 ;;
     # <<< project-specific
-    -h|--help)   sed -n '3,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)   sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) err "unknown option '$arg' (try --help)"; exit 2 ;;
   esac
 done
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 # True when the resolved compose config declares at least one build context.
+# Capture first, then grep the variable: `docker compose config | grep -q` lets
+# grep close the pipe on the first match, `config` can then exit 141 (SIGPIPE),
+# and `set -o pipefail` would turn a repo that HAS a build context into "no
+# build context here".
 _has_build_services() {
-  docker compose config 2>/dev/null | grep -qE '^[[:space:]]+context:[[:space:]]'
+  local cfg
+  cfg="$(docker compose config 2>/dev/null || true)"
+  grep -qE '^[[:space:]]+context:[[:space:]]' <<<"$cfg"
 }
 
 # Poll every configured compose service to one shared deadline. A service passes
@@ -168,6 +174,8 @@ EOF
 command -v docker >/dev/null 2>&1        || { err "docker is not installed or not on PATH."; exit 1; }
 docker info >/dev/null 2>&1              || { err "Docker daemon is not running. Start Docker and retry."; exit 1; }
 docker compose version >/dev/null 2>&1   || { err "'docker compose' v2 is required. Update Docker."; exit 1; }
+# The --pull / --no-build paths pass `up --pull never`, which needs Compose >= v2.8.0
+# (2022-07). Not version-gated here: every current Docker ships far newer.
 
 if [ ! -f .env ]; then
   if [ -f .env.example ]; then
