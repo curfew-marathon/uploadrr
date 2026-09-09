@@ -1,24 +1,44 @@
-# Same runtime as a hand-written compose file - the host-specific values just live
-# in .env now (see .env.example). Every one has a ${VAR:-default} so the file still
-# resolves if .env is missing. ./start.sh creates .env from the example if absent.
+# Host-specific values live in .env (see .env.example). Every one has a
+# ${VAR:-default} so the file still resolves if .env is missing. ./start.sh
+# creates .env from the example if absent.
+#
+# One image, two paths (the service carries both `build:` and `image:`):
+#   Dev     ./start.sh           builds from `build: .` and tags it `image:`, then up.
+#   Server  ./start.sh --pull    `docker compose pull` then up --no-build - runs the
+#                                published image. UPLOADRR_TAG pins which tag it fetches.
 #
 # uploadrr talks to an adb server on the HOST over TCP (127.0.0.1:5037); the image
 # has no adb binary of its own. Install deploy/adb-server.service once
 # (README > ADB Server Setup) - ./start.sh brings it up before this stack.
 services:
   uploadrr:
+    build: .
     image: ghcr.io/curfew-marathon/uploadrr:${UPLOADRR_TAG:-latest}
     container_name: uploadrr
     network_mode: host
     environment:
-      - PUID=${PUID:-1000}
-      - PGID=${PGID:-1000}
       - TZ=${TZ:-UTC}
       # Optional app settings (defaults match src/launch.py). Listed here so a
       # value set in .env actually reaches the container.
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - METRICS_ENABLED=${METRICS_ENABLED:-true}
       - METRICS_PORT=${METRICS_PORT:-9120}
+    healthcheck:
+      # "healthy" = the process is up and serving its OWN metrics (not "actively
+      # watching" - metrics.start() precedes observer.start() by a sub-second in
+      # src/launch.py, and a real startup failure is a crash that start.sh's
+      # wait_for_health catches via status != running). busybox wget + /bin/sh
+      # ship in the python:alpine base. The guard mirrors src/launch.py exactly
+      # (METRICS_ENABLED in {1,true,yes}); with metrics off there is nothing to
+      # probe, so the check passes. The response is grepped for an uploadrr_*
+      # metric: network_mode: host means an unrelated /metrics listener already
+      # on this port would otherwise satisfy a bare HTTP 200 (metrics.start()
+      # swallows the bind collision). $$ is a literal $ for the container shell.
+      test: ["CMD-SHELL", "v=$$(echo \"$${METRICS_ENABLED:-true}\" | tr 'A-Z' 'a-z'); case \"$$v\" in 1|true|yes) wget -q -O - \"http://127.0.0.1:$${METRICS_PORT:-9120}/metrics\" 2>/dev/null | grep -q '^uploadrr_' || exit 1 ;; *) exit 0 ;; esac"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     volumes:
       - ${UPLOADRR_CONFIG_DIR:-./config}:/config:ro
       - ${UPLOADRR_DATA_DIR:-./data}:/data

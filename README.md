@@ -51,8 +51,8 @@ python src/launch.py
 #### Docker Compose (recommended)
 
 A [`docker-compose.yml`](docker-compose.yml) is included. It reads the host paths,
-`PUID`/`PGID`/`TZ`, and the optional `LOG_LEVEL` / `METRICS_*` settings from `.env`,
-each with a default, so an empty `.env` still brings the stack up.
+`TZ`, and the optional `LOG_LEVEL` / `METRICS_*` settings from `.env`, each with a
+default, so an empty `.env` still brings the stack up.
 
 1. Create your environment file:
 ```bash
@@ -72,14 +72,21 @@ the compose file falls back to a repository-local `./config` and `./data` bind m
 
 3. Start and stop with the helper scripts:
 ```bash
-./start.sh          # ensures the adb server is up, then `docker compose up -d`
-./start.sh --pull   # update to the latest image first
-./start.sh --logs   # follow logs once it is up
+./start.sh          # ensures the adb server is up, builds the image, then starts
+./start.sh --pull   # run the published image instead of building (server default)
+./start.sh --no-build  # run whatever image is already present
+./start.sh --logs   # follow logs once healthy
+./start.sh --no-adb # skip the adb server check
 ./stop.sh           # `docker compose down` (leaves the adb server running)
 ./stop.sh --adb     # also stops the adb server
+./stop.sh --images  # also removes the built/pulled image
+./stop.sh --volumes # also removes Compose volumes after a prompt (--yes skips it)
 ```
-Or drive compose directly: `docker compose up -d`, `docker compose logs -f`,
-`docker compose pull && docker compose up -d` to update.
+Default `./start.sh` builds from source so you run exactly what is in your tree;
+`--pull` is the explicit opt-in to the published
+`ghcr.io/curfew-marathon/uploadrr` image (the server passes it on every start).
+`./start.sh` creates `.env` from the example if missing, validates the compose
+file, and waits for the container's healthcheck.
 
 #### Docker run
 
@@ -98,10 +105,13 @@ docker run -v /path/to/config:/config \
 
 #### Building from Source
 
-Alternatively, you can build the image yourself:
+Alternatively, build the image yourself under the name Compose expects:
 ```bash
-docker build -t uploadrr .
+docker compose build
 ```
+Use `docker compose build`, not `docker build -t uploadrr .`: the compose file
+references `ghcr.io/curfew-marathon/uploadrr:${UPLOADRR_TAG:-latest}`, so a plain
+`uploadrr:latest` tag would not be picked up by `./start.sh --no-build`.
 
 ## ADB Server Setup
 
