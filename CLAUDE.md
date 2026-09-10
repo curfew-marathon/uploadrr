@@ -54,3 +54,22 @@ Matches CI (`.github/workflows/ci.yml`, Python 3.11):
 - No em dashes in code, comments, commit messages, or PR text.
 - Match the surrounding style: these modules favor thorough docstrings that explain
   *why* a workaround exists.
+
+## Canonical run scripts
+
+`start.sh` and `stop.sh` are shared across the curfew-marathon deploy repos
+(hivemind, importrr, uploadrr, prometheus, grafana) and are kept **byte-identical
+outside the fences**. Only the `# >>> project-specific` ... `# <<< project-specific`
+blocks (here: the adb-server check and `--adb` handling), the header comment, the
+`--help` line range, and the `.env` bootstrap messages may differ between repos.
+**hivemind is the reference.**
+
+Interface: `./start.sh` builds from source; `./start.sh --pull` runs the published
+image; `./start.sh --no-build` runs whatever image is already local; `--no-adb`
+skips the host adb-server check. `./stop.sh` takes it down (`--volumes`,
+`--images`, `--adb`). `wait_for_health` polls the compose healthcheck.
+
+To change anything outside the fences: edit it in **hivemind** first, run
+`scripts/canonical-hash.sh` to get the new hash, set `EXPECTED=` in that script,
+then copy `start.sh` + `stop.sh` + `scripts/canonical-hash.sh` here. The
+`canonical-scripts` CI job fails if this repo's shared block drifts.

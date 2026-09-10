@@ -112,12 +112,15 @@ wait_for_health() {
 
   log "Waiting up to ${timeout}s for services to report healthy..."
   while :; do
-    local all_ok=1 pending="" svc cid status health
+    local all_ok=1 pending="" svc cid snap status health
     for svc in $services; do
       cid="$(docker compose ps -aq "$svc" 2>/dev/null | head -n1 || true)"
       if [ -z "$cid" ]; then all_ok=0; pending="$pending ${svc}(no-container)"; continue; fi
-      status="$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo unknown)"
-      health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || echo none)"
+      # One inspect snapshot. Two calls would let the container exit between them:
+      # call 1 sees "running", call 2 returns the retained "healthy" - exactly the
+      # crash this guard rejects. Inspect failure -> "unknown|none" -> not-ready.
+      snap="$(docker inspect -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid" 2>/dev/null || echo 'unknown|none')"
+      status="${snap%%|*}"; health="${snap##*|}"
       # "running" is required regardless of the health value: Docker keeps the
       # last .State.Health.Status ("healthy") after a container exits, so a
       # crash right after going healthy would otherwise pass. created / restarting
@@ -174,8 +177,6 @@ EOF
 command -v docker >/dev/null 2>&1        || { err "docker is not installed or not on PATH."; exit 1; }
 docker info >/dev/null 2>&1              || { err "Docker daemon is not running. Start Docker and retry."; exit 1; }
 docker compose version >/dev/null 2>&1   || { err "'docker compose' v2 is required. Update Docker."; exit 1; }
-# The --pull / --no-build paths pass `up --pull never`, which needs Compose >= v2.8.0
-# (2022-07). Not version-gated here: every current Docker ships far newer.
 
 if [ ! -f .env ]; then
   if [ -f .env.example ]; then
