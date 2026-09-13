@@ -30,7 +30,7 @@ jobs:
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         if [ -f pyproject.toml ]; then pip install .; fi
-        pip install ruff mypy pytest pytest-cov
+        pip install ruff mypy pytest pytest-cov pip-audit
 
     - name: Linting and Formatting
       run: |
@@ -41,9 +41,13 @@ jobs:
       run: |
         mypy .
 
+    - name: Dependency audit
+      run: |
+        pip-audit -r requirements.txt
+
     - name: Unit Tests + Coverage
       run: |
-        pytest --cov=. --cov-report=term-missing
+        pytest --cov=src --cov-report=term-missing --cov-fail-under=80
 
   compose-check:
     name: Docker Compose Config Check
