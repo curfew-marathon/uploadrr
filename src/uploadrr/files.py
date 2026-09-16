@@ -70,6 +70,8 @@ def launch():
                         logger.error("Unexpected error processing %s: %s", f, str(e))
                         # Don't delete file for unexpected errors
 
+                    _update_pending_tars(f)
+
                 logger.debug("Waiting 60 seconds before processing next file")
                 time.sleep(60)  # Delay for 1 minute (60 seconds).
 
@@ -89,6 +91,32 @@ def launch():
         observer.stop()
     observer.join()
     logger.info("Uploadrr stopped")
+
+
+def count_pending_tars(path):
+    """Count `.tar` files currently sitting in `path` (not subdirectories)."""
+    try:
+        entries = os.listdir(path)
+    except OSError:
+        return 0
+    return sum(
+        1
+        for entry in entries
+        if entry.endswith(".tar") and os.path.isfile(os.path.join(path, entry))
+    )
+
+
+def _update_pending_tars(f):
+    """Recount on-disk backlog for `f`'s directory, independent of the
+    in-memory queue: a failed attempt leaves the queue immediately but leaves
+    the tar on disk, so this is what actually catches "device is down" or
+    "tars arriving faster than we push" - queue depth alone would not."""
+    d = os.path.dirname(f)
+    try:
+        serial = CONFIG.get_serial(d)
+    except KeyError:
+        return  # no device config for this directory; nothing to label it with
+    metrics.PENDING_TARS.labels(serial=serial).set(count_pending_tars(d))
 
 
 def process(f):
@@ -131,6 +159,11 @@ def add_files(path, queue):
             )
         else:
             logger.debug("No tar files found in %s", path)
+
+        try:
+            metrics.PENDING_TARS.labels(serial=CONFIG.get_serial(path)).set(tar_count)
+        except KeyError:
+            pass  # no device config for this directory; nothing to label it with
 
     except FileNotFoundError:
         logger.warning("Archive directory not found: %s", path)
