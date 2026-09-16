@@ -54,6 +54,20 @@ PUSH_FAILURES_TOTAL = Counter(
     "uploadrr_push_failures_total", "Failed transfer attempts, by device", ["serial"]
 )
 
+DEVICE_FREE_BYTES = Gauge(
+    "uploadrr_device_free_bytes",
+    "Free space on device DCIM storage, last read (pre-push gate check or "
+    "post-cleanup read)",
+    ["serial"],
+)
+
+PENDING_TARS = Gauge(
+    "uploadrr_pending_tars",
+    "Tar files currently sitting on disk unprocessed for a device, last "
+    "recount (independent of the in-memory processing queue)",
+    ["serial"],
+)
+
 
 def bind_queue_depth(q):
     """Wire the queue-depth gauge to `q.qsize()`. Called once from files.launch()."""

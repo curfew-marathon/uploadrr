@@ -422,6 +422,21 @@ def test_verify_free_space_unparseable():
         verify_free_space(Device(FakeRaw({"df -k": ("one line only", 0)})), 1)
 
 
+def test_verify_free_space_records_gauge_on_pass():
+    raw = FakeRaw({"df -k": (DF_OK, 0)})
+    verify_free_space(Device(raw), 1000)
+    assert _labeled(metrics.DEVICE_FREE_BYTES, serial=raw.serial) == 99999000 * 1024
+
+
+def test_verify_free_space_records_gauge_before_raising():
+    # The gate check parses free space before it knows whether it's enough -
+    # the reading is still worth recording even on the failing path.
+    raw = FakeRaw({"df -k": (DF_LOW, 0)})
+    with pytest.raises(AdbError, match="insufficient free space"):
+        verify_free_space(Device(raw), 100_000)
+    assert _labeled(metrics.DEVICE_FREE_BYTES, serial=raw.serial) == 128 * 1024
+
+
 # --- _archive_members ---------------------------------------------------------
 
 def test_archive_members_returns_regular_file_names(tmp_path):
@@ -532,6 +547,46 @@ def test_push_file_happy_path_scans_extracted_files(monkeypatch, tmp_path):
     assert _histogram_count(metrics.PUSH_SECONDS, serial=raw.serial) == before_seconds + 1
     # A successful push must not also count as a failure.
     assert _labeled(metrics.PUSH_FAILURES_TOTAL, serial=raw.serial) == before_failures
+
+
+def test_push_file_records_free_space_at_both_points(monkeypatch, tmp_path):
+    tar = _make_tar(tmp_path, "i.tar", [("p1.jpg", b"data")])
+    raw = FakeRaw({"df -k": (DF_OK, 0)})
+    monkeypatch.setattr("uploadrr.adb.get_device", lambda s: Device(raw))
+    monkeypatch.setattr("uploadrr.adb.post_work", MagicMock())
+
+    push_file("test_serial", str(tar))
+
+    df_calls = [c for c in raw.shell_calls if c.startswith("df -k")]
+    assert len(df_calls) == 2  # pre-push gate check, post-cleanup read
+    assert _labeled(metrics.DEVICE_FREE_BYTES, serial=raw.serial) == 99999000 * 1024
+
+
+def test_push_file_post_cleanup_free_space_read_failure_does_not_raise(
+    monkeypatch, tmp_path, caplog
+):
+    # The transfer already succeeded by the time the post-cleanup read runs,
+    # so a failure there is informational only - it must never surface as a
+    # raised error from a successful push.
+    caplog.set_level(logging.WARNING)
+    tar = _make_tar(tmp_path, "j.tar", [("p1.jpg", b"data")])
+    raw = FakeRaw({"df -k": (DF_OK, 0)})
+    monkeypatch.setattr("uploadrr.adb.get_device", lambda s: Device(raw))
+    monkeypatch.setattr("uploadrr.adb.post_work", MagicMock())
+
+    calls = {"n": 0}
+
+    def flaky_free_bytes(device):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 99999000 * 1024
+        raise AdbError("device offline")
+
+    monkeypatch.setattr("uploadrr.adb._free_bytes", flaky_free_bytes)
+
+    push_file("test_serial", str(tar))  # must not raise
+
+    assert "Could not read free space" in caplog.text
 
 
 def test_push_file_counts_failure_when_post_work_raises(monkeypatch, tmp_path):

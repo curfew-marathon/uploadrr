@@ -197,9 +197,8 @@ class Device:
         metrics.PUSH_BYTES_TOTAL.labels(serial=self.serial).inc(total)
 
 
-def verify_free_space(device, file_size):
-    """Raise `AdbError` unless the device has roughly 3x `file_size` free."""
-    logger.debug("Checking free space on device %s", device.serial)
+def _free_bytes(device):
+    """Return free space (bytes) on the device's camera storage, via `df -k`."""
     out = device.sh(f"df -k {shlex.quote(C.CAMERA)}")
     rows = [r for r in out.splitlines() if r.strip()]
     if len(rows) < 2:
@@ -207,9 +206,16 @@ def verify_free_space(device, file_size):
 
     cols = rows[-1].split()
     try:
-        free = int(cols[3]) * 1024  # "Available" column, 1K blocks
+        return int(cols[3]) * 1024  # "Available" column, 1K blocks
     except (IndexError, ValueError) as e:
         raise AdbError(f"Cannot parse `df` row on {device.serial}: {rows[-1]!r}") from e
+
+
+def verify_free_space(device, file_size):
+    """Raise `AdbError` unless the device has roughly 3x `file_size` free."""
+    logger.debug("Checking free space on device %s", device.serial)
+    free = _free_bytes(device)
+    metrics.DEVICE_FREE_BYTES.labels(serial=device.serial).set(free)
 
     # Buffer for the tar file plus its extracted copy plus slack.
     required = file_size * 3
@@ -303,6 +309,22 @@ def push_file(serial, file):
                     logger.warning(
                         "Could not remove %s on device %s: %s",
                         file_dest,
+                        device.serial,
+                        e,
+                    )
+
+                # Informational only: the transfer already succeeded, so a
+                # failure here must never mask that outcome. This is the
+                # number that matters for trending real device fullness - the
+                # pre-push read above is a conservative gate, not the
+                # post-transfer truth.
+                try:
+                    metrics.DEVICE_FREE_BYTES.labels(serial=device.serial).set(
+                        _free_bytes(device)
+                    )
+                except AdbError as e:
+                    logger.warning(
+                        "Could not read free space on device %s after cleanup: %s",
                         device.serial,
                         e,
                     )
