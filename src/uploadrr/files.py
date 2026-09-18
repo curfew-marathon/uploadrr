@@ -85,6 +85,7 @@ def launch():
                 logger.info("Last scan was %.1f hours ago", hours_since_scan)
                 files_backfill(queue)
                 last_scan_time = current_time
+                _record_device_connectivity()
 
     except KeyboardInterrupt:
         logger.info("Shutdown requested - stopping file observer")
@@ -117,6 +118,21 @@ def _update_pending_tars(f):
     except KeyError:
         return  # no device config for this directory; nothing to label it with
     metrics.PENDING_TARS.labels(serial=serial).set(count_pending_tars(d))
+
+
+def _record_device_connectivity():
+    """Record which configured devices are currently reachable over adb.
+    Runs off the existing 24h periodic-scan wake instead of a new poll loop."""
+    try:
+        connected = adb.connected_serials()
+    except adb.AdbError as e:
+        logger.warning("Could not enumerate connected devices: %s", e)
+        return
+    for d in CONFIG.get_data():
+        serial = d["serial"]
+        metrics.DEVICE_CONNECTED.labels(serial=serial).set(
+            1 if serial in connected else 0
+        )
 
 
 def process(f):

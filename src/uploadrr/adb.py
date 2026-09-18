@@ -67,6 +67,16 @@ def get_device(serial):
     return Device(raw)
 
 
+def connected_serials():
+    """Return the set of serials adb currently reports as connected and
+    authorized (`adb devices` state "device") to the host adb server."""
+    try:
+        devices = _client().devices(state="device")
+    except Exception as e:  # socket timeout, adb server down, transport error
+        raise AdbError(f"adb server unreachable while listing devices: {e}") from e
+    return {d.serial for d in devices}
+
+
 class Device:
     """Thin wrapper over a ppadb device that adds per-call timeouts and turns
     non-zero shell exits and transport errors into exceptions."""
