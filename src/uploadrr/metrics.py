@@ -68,6 +68,13 @@ PENDING_TARS = Gauge(
     ["serial"],
 )
 
+DEVICE_CONNECTED = Gauge(
+    "uploadrr_device_connected",
+    "Whether a configured device is currently connected and authorized "
+    "over adb (1) or not (0), last checked on the periodic scan wake",
+    ["serial"],
+)
+
 
 def bind_queue_depth(q):
     """Wire the queue-depth gauge to `q.qsize()`. Called once from files.launch()."""

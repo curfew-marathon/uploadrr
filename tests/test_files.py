@@ -1,8 +1,8 @@
 import os
-from queue import Queue
+from queue import Empty, Queue
 from unittest.mock import MagicMock, patch
 
-from uploadrr import files, metrics
+from uploadrr import adb, files, metrics
 from uploadrr.files import add_files
 
 
@@ -118,3 +118,51 @@ def test_launch_updates_pending_tars_after_failed_process(monkeypatch, tmp_path)
 
     assert metrics.PENDING_TARS.labels(serial="test_serial")._value.get() == 1
     assert metrics.QUEUE_DEPTH.collect()[0].samples[0].value == 0
+
+
+def _run_launch_through_periodic_scan(monkeypatch):
+    """Drive files.launch() straight into the `except Empty:` periodic-scan
+    branch (no file ever queued), then exit the loop the same way it always
+    exits: a KeyboardInterrupt raised on the *next* queue.get() call."""
+    fake_queue = MagicMock()
+    fake_queue.qsize.return_value = 0
+    fake_queue.get.side_effect = [Empty(), KeyboardInterrupt()]
+    monkeypatch.setattr(files, "Queue", lambda: fake_queue)
+    monkeypatch.setattr(files, "Observer", lambda: MagicMock())
+    monkeypatch.setattr(files, "files_backfill", MagicMock())
+    fake_config = MagicMock()
+    fake_config.get_data.return_value = [
+        {"serial": "connected_serial"},
+        {"serial": "disconnected_serial"},
+    ]
+    monkeypatch.setattr(files, "CONFIG", fake_config)
+
+
+def test_launch_records_device_connectivity_on_periodic_scan(monkeypatch):
+    _run_launch_through_periodic_scan(monkeypatch)
+    monkeypatch.setattr(
+        adb, "connected_serials", MagicMock(return_value={"connected_serial"})
+    )
+
+    files.launch()
+
+    assert _labeled(metrics.DEVICE_CONNECTED, serial="connected_serial") == 1
+    assert _labeled(metrics.DEVICE_CONNECTED, serial="disconnected_serial") == 0
+
+
+def test_launch_periodic_scan_survives_adb_server_down(monkeypatch):
+    # Regression: the periodic scan branch must keep running its other work
+    # (files_backfill already ran) and the loop must still exit cleanly even
+    # when the adb server is unreachable - a metrics problem must never stall
+    # or crash the transfer pipeline.
+    _run_launch_through_periodic_scan(monkeypatch)
+    monkeypatch.setattr(
+        adb,
+        "connected_serials",
+        MagicMock(side_effect=adb.AdbError("adb server unreachable")),
+    )
+    before = _labeled(metrics.DEVICE_CONNECTED, serial="connected_serial")
+
+    files.launch()  # must not raise
+
+    assert _labeled(metrics.DEVICE_CONNECTED, serial="connected_serial") == before

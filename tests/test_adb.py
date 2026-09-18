@@ -17,6 +17,7 @@ from uploadrr.adb import (
     _ensure_interactive,
     _interactive,
     _media_scan,
+    connected_serials,
     get_device,
     pre_work,
     push_file,
@@ -402,8 +403,40 @@ def test_client_wraps_create_connection_with_default_timeout(monkeypatch):
     client = _client()
     client.create_connection()
     client.create_connection(timeout=5)
-
     assert calls == [C.CONNECT_TIMEOUT, 5]
+
+
+def test_connected_serials_filters_to_device_state(monkeypatch):
+    """The state="device" filter is ppadb's own, applied before results ever
+    reach us - assert it's passed through rather than reimplementing the
+    filtering here (ppadb's Device wrapper drops the state token entirely)."""
+    other = FakeRaw()
+    other.serial = "other_serial"
+    client = MagicMock()
+    client.devices.return_value = [FakeRaw(), other]
+    monkeypatch.setattr("uploadrr.adb._CLIENT", client)
+
+    result = connected_serials()
+
+    client.devices.assert_called_once_with(state="device")
+    assert result == {"test_serial", "other_serial"}
+
+
+def test_connected_serials_empty_when_nothing_connected(monkeypatch):
+    client = MagicMock()
+    client.devices.return_value = []
+    monkeypatch.setattr("uploadrr.adb._CLIENT", client)
+
+    assert connected_serials() == set()
+
+
+def test_connected_serials_server_down_becomes_adberror(monkeypatch):
+    client = MagicMock()
+    client.devices.side_effect = RuntimeError("Is adb running on your computer?")
+    monkeypatch.setattr("uploadrr.adb._CLIENT", client)
+
+    with pytest.raises(AdbError, match="adb server unreachable"):
+        connected_serials()
 
 
 # --- verify_free_space --------------------------------------------------------
