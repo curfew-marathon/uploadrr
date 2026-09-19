@@ -18,7 +18,7 @@ services:
     network_mode: host
     environment:
       - TZ=${TZ:-UTC}
-      # Optional app settings (defaults match src/launch.py). Listed here so a
+      # Optional app settings (defaults match src/uploadrr/launch.py). Listed here so a
       # value set in .env actually reaches the container.
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - METRICS_ENABLED=${METRICS_ENABLED:-true}
@@ -26,9 +26,9 @@ services:
     healthcheck:
       # "healthy" = the process is up and serving its OWN metrics (not "actively
       # watching" - metrics.start() precedes observer.start() by a sub-second in
-      # src/launch.py, and a real startup failure is a crash that start.sh's
+      # src/uploadrr/launch.py, and a real startup failure is a crash that start.sh's
       # wait_for_health catches via status != running). busybox wget + /bin/sh
-      # ship in the python:alpine base. The guard mirrors src/launch.py exactly
+      # ship in the python:alpine base. The guard mirrors src/uploadrr/launch.py exactly
       # (METRICS_ENABLED in {1,true,yes}); with metrics off there is nothing to
       # probe, so the check passes. The response is grepped for an uploadrr_*
       # metric: network_mode: host means an unrelated /metrics listener already

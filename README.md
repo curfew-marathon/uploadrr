@@ -43,7 +43,7 @@ pip install -r requirements.txt
 
 4. Run the application:
 ```bash
-python src/launch.py
+PYTHONPATH=src python -m uploadrr.launch
 ```
 
 ### Docker Installation
@@ -261,13 +261,13 @@ Archive Directory → File Monitor → Queue → ADB Transfer → Extract → Cl
 
 ```
 src/
-├── launch.py              # Main entry point
 └── uploadrr/
     ├── __init__.py        # Package initialization
     ├── adb.py             # ADB device communication
     ├── config.py          # Configuration file parser
     ├── constants.py       # Application constants
     ├── files.py           # File monitoring and processing
+    ├── launch.py          # Main entry point
     ├── listener.py        # File system event handler
     └── metrics.py         # Prometheus metrics
 ```
@@ -293,11 +293,11 @@ Set the logging level using the `LOG_LEVEL` environment variable:
 ```bash
 # For production (default)
 export LOG_LEVEL=INFO
-python src/launch.py
+PYTHONPATH=src python -m uploadrr.launch
 
 # For debugging
 export LOG_LEVEL=DEBUG
-python src/launch.py
+PYTHONPATH=src python -m uploadrr.launch
 
 # Docker example
 docker run -e LOG_LEVEL=DEBUG ghcr.io/curfew-marathon/uploadrr:latest
