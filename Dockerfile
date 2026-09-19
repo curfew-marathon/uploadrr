@@ -11,6 +11,7 @@ RUN apk add --no-cache tzdata
 
 # Copy the Python app and install requirements
 COPY src /app
+WORKDIR /app
 COPY requirements.txt requirements.txt
 RUN pip3 install --no-cache-dir --root-user-action=ignore -r requirements.txt
 
@@ -18,4 +19,4 @@ RUN pip3 install --no-cache-dir --root-user-action=ignore -r requirements.txt
 EXPOSE 9120
 
 # Go for launch!
-CMD ["python3", "/app/launch.py"]
+CMD ["python3", "-m", "uploadrr.launch"]
