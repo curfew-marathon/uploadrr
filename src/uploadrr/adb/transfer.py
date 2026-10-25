@@ -22,7 +22,7 @@ def _free_bytes(device: Device) -> int:
 
     cols = rows[-1].split()
     try:
-        return int(cols[3]) * 1024  # "Available" column, 1K blocks
+        return int(cols[3]) * C.BYTES_PER_KB  # "Available" column, 1K blocks
     except (IndexError, ValueError) as e:
         raise AdbError(f"Cannot parse `df` row on {device.serial}: {rows[-1]!r}") from e
 
@@ -47,8 +47,7 @@ def verify_free_space(device: Device, file_size: int) -> None:
     free = _free_bytes(device)
     metrics.DEVICE_FREE_BYTES.labels(serial=device.serial).set(free)
 
-    # Buffer for the tar file plus its extracted copy plus slack.
-    required = file_size * 3
+    required = file_size * C.FREE_SPACE_SAFETY_FACTOR
     logger.debug(
         "Device %s - free: %d bytes, required: %d bytes",
         device.serial,

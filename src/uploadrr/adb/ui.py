@@ -6,6 +6,7 @@ import shlex
 import time
 from urllib.parse import quote
 
+from uploadrr import constants as C
 from uploadrr.adb import transport
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,9 @@ def _swipe_up(device: transport.Device) -> None:
     )
 
 
-def _ensure_interactive(device: transport.Device, settle: float = 1.5) -> None:
+def _ensure_interactive(
+    device: transport.Device, settle: float = C.KEYGUARD_SETTLE_SECONDS
+) -> None:
     """The target device has no secure lock, but its keyguard state varies:
     sometimes already interactive, sometimes screen-off, sometimes a non-secure
     keyguard is showing, sometimes it needs a swipe. Escalate until a `dumpsys`
@@ -95,7 +98,9 @@ def _warn_if_never_unlocked(device: transport.Device) -> None:
         )
 
 
-def _media_scan(device: transport.Device, paths: list[str], batch: int = 40) -> None:
+def _media_scan(
+    device: transport.Device, paths: list[str], batch: int = C.MEDIA_SCAN_BATCH_SIZE
+) -> None:
     """Broadcast MEDIA_SCANNER_SCAN_FILE for each extracted path in batches."""
     if not paths:
         logger.debug("No extracted files to scan on device %s", device.serial)

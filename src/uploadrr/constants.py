@@ -23,3 +23,13 @@ PUSH_TIMEOUT_FLOOR = 300
 # stall timeout, the mechanism actually expected to unblock it) to wait before
 # giving up on the worker thread and just logging the leak.
 PUSH_CANCEL_GRACE = 5
+
+SCAN_INTERVAL_SECONDS = 86400  # 24 hours: periodic backfill rescan interval
+PROCESS_DELAY_SECONDS = 60  # pacing delay between processing queued files
+
+# Buffer for the tar file plus its extracted copy plus slack.
+FREE_SPACE_SAFETY_FACTOR = 3
+
+MEDIA_SCAN_BATCH_SIZE = 40  # files per `am broadcast` batch
+KEYGUARD_SETTLE_SECONDS = 1.5  # wait after each interactivity-escalation step
+BYTES_PER_KB = 1024  # `df -k` reports 1K blocks

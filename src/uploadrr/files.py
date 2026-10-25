@@ -8,6 +8,7 @@ from queue import Empty, Queue
 from watchdog.observers import Observer
 
 from uploadrr import adb, metrics, scan
+from uploadrr import constants as C
 from uploadrr.listener import MonitorFolder
 
 logger = logging.getLogger(__name__)
@@ -27,20 +28,19 @@ def launch() -> None:
 
     # Track last periodic scan time
     last_scan_time = time.time()
-    scan_interval = 86400  # 24 hours (86400 seconds)
 
     try:
         while True:
             try:
                 # Wait for file with 24-hour timeout
                 logger.debug("Waiting for file to process (timeout: 24 hours)...")
-                f = queue.get(timeout=scan_interval)
+                f = queue.get(timeout=C.SCAN_INTERVAL_SECONDS)
                 logger.info("Processing new file: %s", f)
 
                 _dispatch_outcome(f, event_handler)
 
                 logger.debug("Waiting 60 seconds before processing next file")
-                time.sleep(60)  # Delay for 1 minute (60 seconds).
+                time.sleep(C.PROCESS_DELAY_SECONDS)
 
             except Empty:
                 # Queue timeout - perform periodic scan (every 24 hours)
