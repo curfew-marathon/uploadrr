@@ -18,7 +18,7 @@ def test_config_methods(tmp_path):
         assert config.get_archive() == "/archives"
         data = config.get_data()
         assert len(data) == 1
-        assert data[0]["import"] == ["camera1", "camera2"]
+        assert data[0]["import_dir"] == ["camera1", "camera2"]
         assert data[0]["serial"] == "serial123"
 
         # Test get_serial — archive path is keyed by section name, not import_dir
@@ -42,7 +42,7 @@ def test_config_multiple_devices_and_filters_blank_import_dirs(tmp_path):
         data = config.get_data()
 
         assert len(data) == 2
-        assert data[0]["import"] == ["camera1", "camera2"]
-        assert data[1]["import"] == ["camera3"]
+        assert data[0]["import_dir"] == ["camera1", "camera2"]
+        assert data[1]["import_dir"] == ["camera3"]
         assert config.get_serial(os.path.join("/archives", "device1")) == "serial123"
         assert config.get_serial(os.path.join("/archives", "device2")) == "serial456"

@@ -8,7 +8,7 @@ from uploadrr.constants import CANDIDATES
 
 DeviceConfig = TypedDict(
     "DeviceConfig",
-    {"album": str, "archive": str, "import": list[str], "serial": str},
+    {"album_dir": str, "archive_dir": str, "import_dir": list[str], "serial": str},
 )
 
 
@@ -35,13 +35,13 @@ class Config:
             serial = parser[section_name]["serial"]
             archive_dir = os.path.join(self.archive_root, section_name)
 
-            d: DeviceConfig = {
-                "album": album_dir,
-                "archive": archive_dir,
-                "import": import_dirs,
+            device_cfg: DeviceConfig = {
+                "album_dir": album_dir,
+                "archive_dir": archive_dir,
+                "import_dir": import_dirs,
                 "serial": serial,
             }
-            self.data.append(d)
+            self.data.append(device_cfg)
             self._archive_to_serial[archive_dir] = serial
 
     def get_album(self) -> str:
@@ -53,8 +53,8 @@ class Config:
     def get_data(self) -> list[DeviceConfig]:
         return self.data
 
-    def get_serial(self, d: str) -> str:
-        serial = self._archive_to_serial.get(d)
+    def get_serial(self, archive_dir: str) -> str:
+        serial = self._archive_to_serial.get(archive_dir)
         if serial is not None:
             return serial
-        raise KeyError("No serial for " + d)
+        raise KeyError("No serial for " + archive_dir)

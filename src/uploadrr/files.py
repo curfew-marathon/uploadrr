@@ -98,12 +98,12 @@ def _update_pending_tars(f: str) -> None:
     in-memory queue: a failed attempt leaves the queue immediately but leaves
     the tar on disk, so this is what actually catches "device is down" or
     "tars arriving faster than we push" - queue depth alone would not."""
-    d = os.path.dirname(f)
+    directory = os.path.dirname(f)
     try:
-        serial = scan.CONFIG.get_serial(d)
+        serial = scan.CONFIG.get_serial(directory)
     except KeyError:
         return  # no device config for this directory; nothing to label it with
-    metrics.PENDING_TARS.labels(serial=serial).set(scan.count_pending_tars(d))
+    metrics.PENDING_TARS.labels(serial=serial).set(scan.count_pending_tars(directory))
 
 
 def _record_device_connectivity() -> None:
@@ -114,17 +114,17 @@ def _record_device_connectivity() -> None:
     except adb.AdbError as e:
         logger.warning("Could not enumerate connected devices: %s", e)
         return
-    for d in scan.CONFIG.get_data():
-        serial = d["serial"]
+    for device_cfg in scan.CONFIG.get_data():
+        serial = device_cfg["serial"]
         metrics.DEVICE_CONNECTED.labels(serial=serial).set(
             1 if serial in connected else 0
         )
 
 
 def process(f: str) -> None:
-    d = os.path.dirname(f)
-    logger.debug("Looking up device for directory: %s", d)
-    serial = scan.CONFIG.get_serial(d)
+    directory = os.path.dirname(f)
+    logger.debug("Looking up device for directory: %s", directory)
+    serial = scan.CONFIG.get_serial(directory)
     logger.debug("Found device %s for file %s", serial, f)
     adb.push_file(serial, f)
     logger.debug("Removing source file: %s", f)
