@@ -108,6 +108,33 @@ def test_launch_discards_processed_marker_after_success(monkeypatch):
     assert "test.tar" not in captured["handler"].processed_files
 
 
+def test_launch_discards_processed_marker_after_failure(monkeypatch):
+    # Regression: the discard used to only run in the success branch, so a
+    # failed process() left the entry in processed_files indefinitely - a
+    # same-path tar rewrite after the failure would then be silently dropped
+    # by the listener's on_closed check until the next 24h scan, instead of
+    # being picked up immediately.
+    captured = {}
+
+    def make_handler(queue):
+        handler = MonitorFolder(queue)
+        handler.processed_files.add("test.tar")
+        captured["handler"] = handler
+        return handler
+
+    monkeypatch.setattr(files, "MonitorFolder", make_handler)
+    monkeypatch.setattr(files, "Observer", lambda: MagicMock())
+    monkeypatch.setattr(scan, "files_backfill", lambda q: q.put("test.tar"))
+    monkeypatch.setattr(
+        files, "process", MagicMock(side_effect=OSError("device unreachable"))
+    )
+    monkeypatch.setattr(files.time, "sleep", MagicMock(side_effect=KeyboardInterrupt))
+
+    files.launch()
+
+    assert "test.tar" not in captured["handler"].processed_files
+
+
 def test_launch_updates_pending_tars_after_failed_process(monkeypatch, tmp_path):
     # Regression: uploadrr_queue_depth alone can't show a backlog - a failed
     # process() leaves the queue immediately (queue.get() already dequeued the

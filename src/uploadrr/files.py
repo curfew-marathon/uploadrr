@@ -67,12 +67,6 @@ def _dispatch_outcome(f: str, event_handler: MonitorFolder) -> None:
             process(f)
             metrics.FILES_PROCESSED_TOTAL.labels(outcome="success").inc()
             logger.info("Successfully processed: %s", f)
-            # Clean up tracking for successfully processed files
-            if (
-                hasattr(event_handler, "processed_files")
-                and f in event_handler.processed_files
-            ):
-                event_handler.processed_files.discard(f)
         except KeyError:
             metrics.FILES_PROCESSED_TOTAL.labels(outcome="no_device_config").inc()
             logger.warning("No device configuration found for file: %s", f)
@@ -89,6 +83,15 @@ def _dispatch_outcome(f: str, event_handler: MonitorFolder) -> None:
             metrics.FILES_PROCESSED_TOTAL.labels(outcome="unexpected_error").inc()
             logger.error("Unexpected error processing %s: %s", f, str(e))
             # Don't delete file for unexpected errors
+        finally:
+            # Clean up tracking regardless of outcome - otherwise a same-path
+            # rewrite after a failure would be silently dropped by the
+            # listener's processed_files check until the next 24h scan.
+            if (
+                hasattr(event_handler, "processed_files")
+                and f in event_handler.processed_files
+            ):
+                event_handler.processed_files.discard(f)
 
         _update_pending_tars(f)
 
