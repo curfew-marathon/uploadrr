@@ -1,6 +1,6 @@
 import os
 from queue import Queue
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from uploadrr import metrics, scan
 from uploadrr.scan import add_files
@@ -17,14 +17,15 @@ def test_add_files(tmp_path):
     assert queue.empty()
 
 
-def test_add_files_not_found():
+def test_add_files_not_found(monkeypatch):
     queue = Queue()
-    with patch("uploadrr.scan.logger") as mock_logger:
-        add_files("/non-existent-path", queue)
-        mock_logger.warning.assert_called_with(
-            "Archive directory not found: %s", "/non-existent-path"
-        )
-        assert queue.empty()
+    mock_logger = MagicMock()
+    monkeypatch.setattr(scan, "logger", mock_logger)
+    add_files("/non-existent-path", queue)
+    mock_logger.warning.assert_called_with(
+        "Archive directory not found: %s", "/non-existent-path"
+    )
+    assert queue.empty()
 
 
 def test_count_pending_tars_counts_only_tar_files(tmp_path):
@@ -40,26 +41,28 @@ def test_count_pending_tars_missing_dir_returns_zero():
     assert scan.count_pending_tars("/non-existent-path") == 0
 
 
-def test_add_files_logs_unresolvable_entry_type(tmp_path):
+def test_add_files_logs_unresolvable_entry_type(monkeypatch, tmp_path):
     broken_link = tmp_path / "broken"
     broken_link.symlink_to(tmp_path / "does-not-exist")
     queue = Queue()
 
-    with patch("uploadrr.scan.logger") as mock_logger:
-        add_files(str(tmp_path), queue)
-        mock_logger.warning.assert_any_call(
-            "Cannot resolve file type for: %s", str(broken_link)
-        )
+    mock_logger = MagicMock()
+    monkeypatch.setattr(scan, "logger", mock_logger)
+    add_files(str(tmp_path), queue)
+    mock_logger.warning.assert_any_call(
+        "Cannot resolve file type for: %s", str(broken_link)
+    )
     assert queue.empty()
 
 
-def test_add_files_logs_debug_when_no_tars_found(tmp_path):
+def test_add_files_logs_debug_when_no_tars_found(monkeypatch, tmp_path):
     (tmp_path / "note.txt").write_text("data")
     queue = Queue()
 
-    with patch("uploadrr.scan.logger") as mock_logger:
-        add_files(str(tmp_path), queue)
-        mock_logger.debug.assert_any_call("No tar files found in %s", str(tmp_path))
+    mock_logger = MagicMock()
+    monkeypatch.setattr(scan, "logger", mock_logger)
+    add_files(str(tmp_path), queue)
+    mock_logger.debug.assert_any_call("No tar files found in %s", str(tmp_path))
     assert queue.empty()
 
 
@@ -70,11 +73,12 @@ def test_add_files_logs_error_on_permission_denied(monkeypatch):
     monkeypatch.setattr(scan.os, "listdir", boom)
     queue = Queue()
 
-    with patch("uploadrr.scan.logger") as mock_logger:
-        add_files("/some/path", queue)
-        mock_logger.error.assert_called_once_with(
-            "Permission denied accessing directory: %s", "/some/path"
-        )
+    mock_logger = MagicMock()
+    monkeypatch.setattr(scan, "logger", mock_logger)
+    add_files("/some/path", queue)
+    mock_logger.error.assert_called_once_with(
+        "Permission denied accessing directory: %s", "/some/path"
+    )
     assert queue.empty()
 
 
@@ -85,13 +89,14 @@ def test_add_files_logs_error_on_unexpected_listdir_failure(monkeypatch):
     monkeypatch.setattr(scan.os, "listdir", boom)
     queue = Queue()
 
-    with patch("uploadrr.scan.logger") as mock_logger:
-        add_files("/some/path", queue)
-        mock_logger.error.assert_called_once()
+    mock_logger = MagicMock()
+    monkeypatch.setattr(scan, "logger", mock_logger)
+    add_files("/some/path", queue)
+    mock_logger.error.assert_called_once()
     assert queue.empty()
 
 
-def test_files_backfill_scans_each_configured_directory():
+def test_files_backfill_scans_each_configured_directory(monkeypatch):
     fake_config = MagicMock()
     fake_config.get_data.return_value = [
         {"archive_dir": "/archives/dev1"},
@@ -99,12 +104,11 @@ def test_files_backfill_scans_each_configured_directory():
     ]
     calls = []
 
-    with (
-        patch("uploadrr.scan.CONFIG", fake_config),
-        patch("uploadrr.scan.add_files", lambda path, q: calls.append((path, q))),
-    ):
-        queue = Queue()
-        scan.files_backfill(queue)
+    monkeypatch.setattr(scan, "CONFIG", fake_config)
+    monkeypatch.setattr(scan, "add_files", lambda path, q: calls.append((path, q)))
+
+    queue = Queue()
+    scan.files_backfill(queue)
 
     assert calls == [("/archives/dev1", queue), ("/archives/dev2", queue)]
 
