@@ -1,9 +1,6 @@
 [tool.ruff.lint]
 extend-ignore = ["E402"]
 
-[tool.ruff.format]
-exclude = ["tests/test_adb.py"]
-
 [tool.mypy]
 ignore_missing_imports = true
 mypy_path = ["src"]
@@ -13,7 +10,13 @@ module = ["uploadrr.config", "uploadrr.metrics", "uploadrr.listener"]
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = "uploadrr.adb"
+module = [
+    "uploadrr.adb",
+    "uploadrr.adb.transport",
+    "uploadrr.adb.archive",
+    "uploadrr.adb.transfer",
+    "uploadrr.adb.ui",
+]
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
