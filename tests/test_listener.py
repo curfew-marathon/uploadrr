@@ -31,18 +31,28 @@ def test_on_closed_already_processed():
     assert queue.empty()
 
 
-def test_on_closed_debounce():
+def test_on_closed_reprocesses_after_processed_files_cleared():
+    # Regression: on_closed used to also debounce rapid repeat events for the
+    # same path via a last_event_time timestamp, but processed_files already
+    # fully provides "process exactly once" for every real event sequence
+    # (processed_files.add() happens unconditionally on every event that
+    # passes the first check, so a real second on_closed for the same path
+    # is always caught there first, with last_event_time's own entry already
+    # deleted by the first call's cleanup) - the debounce branch could only
+    # ever fire if something external re-seeded a recent timestamp while
+    # processed_files was separately cleared, exactly like this test does.
+    # That stray state must not delay reprocessing by one tick - it must be
+    # reprocessed immediately. (Setting last_event_time here is harmless on
+    # the fixed code, which no longer reads any such attribute.)
     queue = Queue()
     handler = MonitorFolder(queue)
     event = MagicMock(src_path="test.tar")
 
-    # First call: OK (last_time will be 0.0)
     handler.on_closed(event)
-    assert queue.get() == "test.tar"
+    assert queue.get_nowait() == "test.tar"
 
     handler.processed_files.clear()
+    handler.last_event_time = {"test.tar": time.time()}
 
-    # Manually set last_event_time to simulate rapid calls and test debounce
-    handler.last_event_time["test.tar"] = time.time()
     handler.on_closed(event)
-    assert queue.empty()
+    assert queue.get_nowait() == "test.tar"
