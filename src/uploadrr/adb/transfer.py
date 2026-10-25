@@ -27,15 +27,18 @@ def _free_bytes(device: Device) -> int:
         raise AdbError(f"Cannot parse `df` row on {device.serial}: {rows[-1]!r}") from e
 
 
-def _best_effort(fn: Callable[[], object], warn_msg: str) -> None:
+def _best_effort(fn: Callable[[], object], warn_msg: str, *warn_args: object) -> None:
     """Run `fn`, converting AdbError into a logged warning instead of letting
     it propagate - for cleanup/informational steps that must never mask the
     real outcome of a push that already succeeded or already failed for
-    another reason. `warn_msg` takes a single %s placeholder for the error."""
+    another reason. `warn_args` are passed as separate lazy logging args
+    (not interpolated into `warn_msg` by the caller), so a `%` in e.g. an
+    archive filename or device serial can't be misread as a format
+    directive. `warn_msg`'s final placeholder is always the caught error."""
     try:
         fn()
     except AdbError as e:
-        logger.warning(warn_msg, e)
+        logger.warning(warn_msg, *warn_args, e)
 
 
 def verify_free_space(device: Device, file_size: int) -> None:
@@ -108,7 +111,9 @@ def push_file(serial: str, file: str) -> None:
             finally:
                 _best_effort(
                     lambda: device.sh(f"rm -f {q_dest}", check=True),
-                    f"Could not remove {file_dest} on device {device.serial}: %s",
+                    "Could not remove %s on device %s: %s",
+                    file_dest,
+                    device.serial,
                 )
 
                 # Informational only: the transfer already succeeded, so a
@@ -120,8 +125,8 @@ def push_file(serial: str, file: str) -> None:
                     lambda: metrics.DEVICE_FREE_BYTES.labels(serial=device.serial).set(
                         _free_bytes(device)
                     ),
-                    f"Could not read free space on device {device.serial} "
-                    "after cleanup: %s",
+                    "Could not read free space on device %s after cleanup: %s",
+                    device.serial,
                 )
 
             post_work(device, scanned)
