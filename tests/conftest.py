@@ -22,6 +22,12 @@ DF_NON_NUMERIC_AVAILABLE = (
     "Filesystem 1K-blocks Used Available Use% Mounted on\n"
     "/dev/fuse  100000000 1000        N/A  1% /storage/emulated"
 )
+# Header has an "Available" column, but the data row is short a field (e.g.
+# a wrapped mount-source line) - the "Available" column exists but this row
+# doesn't reach it.
+DF_ROW_SHORTER_THAN_AVAILABLE_COLUMN = (
+    "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/fuse 100000000"
+)
 
 
 def _labeled(counter, **labels):

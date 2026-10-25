@@ -6,6 +6,7 @@ from conftest import (
     DF_LOW,
     DF_NON_NUMERIC_AVAILABLE,
     DF_OK,
+    DF_ROW_SHORTER_THAN_AVAILABLE_COLUMN,
     DF_TOO_FEW_COLUMNS,
     FakeRaw,
     _histogram_count,
@@ -50,6 +51,19 @@ def test_verify_free_space_too_few_columns_raises_cannot_parse():
 def test_verify_free_space_non_numeric_available_raises_cannot_parse():
     with pytest.raises(AdbError, match="Cannot parse"):
         verify_free_space(Device(FakeRaw({"df -k": (DF_NON_NUMERIC_AVAILABLE, 0)})), 1)
+
+
+def test_verify_free_space_row_shorter_than_available_column_raises_cannot_parse():
+    # Hardening, not an observed-incident reproduction: the "Available"
+    # header is present, but the data row (e.g. a wrapped mount-source
+    # line) doesn't reach that column. The explicit bounds check added by
+    # this fix catches it deliberately, rather than relying on it
+    # incidentally raising IndexError the way the old fixed-index lookup
+    # happened to.
+    with pytest.raises(AdbError, match="Cannot parse"):
+        verify_free_space(
+            Device(FakeRaw({"df -k": (DF_ROW_SHORTER_THAN_AVAILABLE_COLUMN, 0)})), 1
+        )
 
 
 def test_verify_free_space_records_gauge_on_pass():
