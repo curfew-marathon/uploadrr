@@ -99,6 +99,8 @@ def count_pending_tars(path):
     try:
         entries = os.listdir(path)
     except OSError:
+        # Can't read the directory right now; report 0 pending rather than
+        # raising, since this only feeds a metrics gauge, not an authoritative count.
         return 0
     return sum(
         1
@@ -186,4 +188,7 @@ def add_files(path, queue):
     except PermissionError:
         logger.error("Permission denied accessing directory: %s", path)
     except Exception as e:  # noqa: BLE001
+        # Deliberate catch-all beyond the two expected cases above: any other
+        # os.listdir/os.path.isfile failure on this directory should not crash
+        # the scan, it should just be logged and skipped.
         logger.error("Error scanning directory %s: %s", path, str(e))
