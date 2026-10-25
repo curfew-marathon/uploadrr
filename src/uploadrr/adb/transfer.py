@@ -145,6 +145,7 @@ def pre_work(device: Device) -> None:
 def post_work(device: Device, scanned_paths: list[str]) -> None:
     """Wake/unlock the device, then trigger a media scan of the new files."""
     ui._ensure_interactive(device)
+    ui._warn_if_never_unlocked(device)
     # Leave Doze if a previous run (or a person) forced it.
     device.sh("dumpsys deviceidle unforce", check=False)
     ui._media_scan(device, scanned_paths)
