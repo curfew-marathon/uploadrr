@@ -5,7 +5,8 @@ import logging
 import os
 import re
 import threading
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 from ppadb.client import Client as AdbClient
 from ppadb.sync import Sync
@@ -14,6 +15,8 @@ from uploadrr import constants as C
 from uploadrr import metrics
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 _CLIENT: AdbClient | None = None
 _RC_MARKER = "__UPLOADRR_RC__="
@@ -54,13 +57,22 @@ def _client() -> AdbClient:
     return _CLIENT
 
 
+def _call_client(fn: Callable[[AdbClient], _T], err_msg: str) -> _T:
+    """Call `fn(_client())`, converting any transport failure (socket
+    timeout, adb server down, transport error) into AdbError with `err_msg`
+    as the summary."""
+    try:
+        return fn(_client())
+    except Exception as e:
+        raise AdbError(f"{err_msg}: {e}") from e
+
+
 def get_device(serial: str) -> Device:
     """Look up a connected device by serial, wrapped as a `Device`."""
     logger.debug("Connecting to device: %s", serial)
-    try:
-        raw = _client().device(serial)
-    except Exception as e:  # socket timeout, adb server down, transport error
-        raise AdbError(f"adb server unreachable for {serial}: {e}") from e
+    raw = _call_client(
+        lambda c: c.device(serial), f"adb server unreachable for {serial}"
+    )
     if raw is None:
         raise AdbError(f"Device {serial} not connected - check `adb devices`")
     return Device(raw)
@@ -69,10 +81,10 @@ def get_device(serial: str) -> Device:
 def connected_serials() -> set[str]:
     """Return the set of serials adb currently reports as connected and
     authorized (`adb devices` state "device") to the host adb server."""
-    try:
-        devices = _client().devices(state="device")
-    except Exception as e:  # socket timeout, adb server down, transport error
-        raise AdbError(f"adb server unreachable while listing devices: {e}") from e
+    devices = _call_client(
+        lambda c: c.devices(state="device"),
+        "adb server unreachable while listing devices",
+    )
     return {d.serial for d in devices}
 
 

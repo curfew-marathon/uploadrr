@@ -28,8 +28,8 @@ def count_pending_tars(path: str) -> int:
 
 
 def files_backfill(queue: Queue[str]) -> None:
-    for d in CONFIG.get_data():
-        add_files(d["archive"], queue)
+    for device_cfg in CONFIG.get_data():
+        add_files(device_cfg["archive_dir"], queue)
 
 
 def add_files(path: str, queue: Queue[str]) -> None:

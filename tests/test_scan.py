@@ -94,8 +94,8 @@ def test_add_files_logs_error_on_unexpected_listdir_failure(monkeypatch):
 def test_files_backfill_scans_each_configured_directory():
     fake_config = MagicMock()
     fake_config.get_data.return_value = [
-        {"archive": "/archives/dev1"},
-        {"archive": "/archives/dev2"},
+        {"archive_dir": "/archives/dev1"},
+        {"archive_dir": "/archives/dev2"},
     ]
     calls = []
 
