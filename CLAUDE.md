@@ -34,9 +34,9 @@ itself.
 Matches CI (`.github/workflows/ci.yml`, Python 3.11):
 
     ruff check .
-    ruff format --check .        # tests/test_adb.py is excluded from formatting (ruff.toml)
+    ruff format --check .        # tests/test_adb.py is excluded from formatting (pyproject.toml)
     mypy .
-    pytest                       # CI runs: pytest --cov=. --cov-report=term-missing
+    pytest --cov=src --cov-report=term-missing --cov-fail-under=80   # matches CI exactly
 
 ## Config and deployment
 
