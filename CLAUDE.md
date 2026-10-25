@@ -32,12 +32,15 @@ itself.
 
 ## Commands
 
-Matches CI (`.github/workflows/ci.yml`, Python 3.11):
+Matches CI (`.github/workflows/ci.yml`, Python 3.15):
 
     ruff check .
-    ruff format --check .        # tests/test_adb.py is excluded from formatting (pyproject.toml)
+    ruff format --check .
     mypy .
-    pytest --cov=src --cov-report=term-missing --cov-fail-under=80   # matches CI exactly
+    pytest --cov=src --cov-report=term-missing --cov-fail-under=99   # matches CI exactly
+
+Coverage floor is 99%, enforced by both `fail_under` in `pyproject.toml` and
+`--cov-fail-under` in CI (the CLI flag wins if they ever disagree).
 
 ## Config and deployment
 
@@ -47,7 +50,7 @@ Matches CI (`.github/workflows/ci.yml`, Python 3.11):
 - `docker-compose.yml` reads host-specific values from a gitignored `.env`
   (template: `.env.example`). Never commit real host paths, timezones, or device
   serials.
-- The process runs as root (plain `python:alpine` base, no s6 init). `PUID` / `PGID`
+- The process runs as root (plain `python:3.15-alpine` base, no s6 init). `PUID` / `PGID`
   are not honoured and are not in the compose file or `.env.example`.
 
 ## Conventions
