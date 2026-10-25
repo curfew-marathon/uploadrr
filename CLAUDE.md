@@ -20,8 +20,9 @@ itself.
 ## Load-bearing invariants
 
 - **A failed transfer must never delete the source tar.** `files.py` deliberately
-  keeps failed files for retry (next new tar, the 24h periodic scan, or a restart).
-  Do not add cleanup to error paths.
+  keeps failed files for retry (the 24h periodic scan, or a restart - a new tar
+  arriving does not itself trigger a rescan of older failed siblings). Do not add
+  cleanup to error paths.
 - **The device layer is hardened on purpose.** Every `adb.py` call has a per-call
   timeout and converts hangs, disconnects, and non-zero shell exits into `AdbError`
   (a subclass of `OSError`, so callers keep the tar). Preserve this when editing;

@@ -2,6 +2,7 @@ import time
 from queue import Queue
 from unittest.mock import MagicMock
 
+from uploadrr import scan
 from uploadrr.listener import MonitorFolder
 
 
@@ -56,3 +57,24 @@ def test_on_closed_reprocesses_after_processed_files_cleared():
 
     handler.on_closed(event)
     assert queue.get_nowait() == "test.tar"
+
+
+def test_on_closed_does_not_rescan_sibling_files(monkeypatch):
+    # Characterization test locking in the documented retry cadence
+    # (CLAUDE.md): a new tar arriving only enqueues itself - it must not
+    # rescan the archive directory for older failed siblings. That's the
+    # 24h periodic scan's job (or a restart), not on_closed's.
+    backfill = MagicMock()
+    add_files = MagicMock()
+    monkeypatch.setattr(scan, "files_backfill", backfill)
+    monkeypatch.setattr(scan, "add_files", add_files)
+
+    queue = Queue()
+    handler = MonitorFolder(queue)
+    event = MagicMock(src_path="test.tar")
+
+    handler.on_closed(event)
+
+    assert queue.get_nowait() == "test.tar"
+    backfill.assert_not_called()
+    add_files.assert_not_called()
