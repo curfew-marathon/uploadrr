@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import os.path
 from configparser import ConfigParser
+from typing import TypedDict
 
 from uploadrr.constants import CANDIDATES
 
-DeviceConfig = dict[str, str | list[str]]
+DeviceConfig = TypedDict(
+    "DeviceConfig",
+    {"album": str, "archive": str, "import": list[str], "serial": str},
+)
 
 
 class Config:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import os
 import time
@@ -14,9 +16,9 @@ logger = logging.getLogger(__name__)
 CONFIG = Config()
 
 
-def launch():
+def launch() -> None:
     logger.info("Starting uploadrr - setting up file observers")
-    queue = Queue()
+    queue: Queue[str] = Queue()
     metrics.bind_queue_depth(queue)
     event_handler = MonitorFolder(queue)
     observer = Observer()
@@ -94,7 +96,7 @@ def launch():
     logger.info("Uploadrr stopped")
 
 
-def count_pending_tars(path):
+def count_pending_tars(path: str) -> int:
     """Count `.tar` files currently sitting in `path` (not subdirectories)."""
     try:
         entries = os.listdir(path)
@@ -109,7 +111,7 @@ def count_pending_tars(path):
     )
 
 
-def _update_pending_tars(f):
+def _update_pending_tars(f: str) -> None:
     """Recount on-disk backlog for `f`'s directory, independent of the
     in-memory queue: a failed attempt leaves the queue immediately but leaves
     the tar on disk, so this is what actually catches "device is down" or
@@ -122,7 +124,7 @@ def _update_pending_tars(f):
     metrics.PENDING_TARS.labels(serial=serial).set(count_pending_tars(d))
 
 
-def _record_device_connectivity():
+def _record_device_connectivity() -> None:
     """Record which configured devices are currently reachable over adb.
     Runs off the existing 24h periodic-scan wake instead of a new poll loop."""
     try:
@@ -137,7 +139,7 @@ def _record_device_connectivity():
         )
 
 
-def process(f):
+def process(f: str) -> None:
     d = os.path.dirname(f)
     logger.debug("Looking up device for directory: %s", d)
     serial = CONFIG.get_serial(d)
@@ -147,12 +149,12 @@ def process(f):
     os.remove(f)
 
 
-def files_backfill(queue):
+def files_backfill(queue: Queue[str]) -> None:
     for d in CONFIG.get_data():
-        add_files(d.get("archive"), queue)
+        add_files(d["archive"], queue)
 
 
-def add_files(path, queue):
+def add_files(path: str, queue: Queue[str]) -> None:
     logger.debug("Scanning directory for existing tar files: %s", path)
     try:
         entries = os.listdir(path)
