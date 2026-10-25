@@ -28,6 +28,13 @@ DF_NON_NUMERIC_AVAILABLE = (
 DF_ROW_SHORTER_THAN_AVAILABLE_COLUMN = (
     "Filesystem 1K-blocks Used Available Use% Mounted on\n/dev/fuse 100000000"
 )
+# "Available" is NOT at the fixed index (3) every other fixture happens to
+# use - this is what actually exercises the header-based lookup itself,
+# rather than coincidentally matching a hardcoded column position.
+DF_AVAILABLE_AT_NONSTANDARD_INDEX = (
+    "Filesystem 1K-blocks Used Use% Available Mounted on\n"
+    "/dev/fuse 100000000 1000 1% 99999000 /storage/emulated"
+)
 
 
 def _labeled(counter, **labels):
