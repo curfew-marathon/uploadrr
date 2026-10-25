@@ -19,6 +19,7 @@ from uploadrr.adb import (
     _media_scan,
     connected_serials,
     get_device,
+    post_work,
     pre_work,
     push_file,
     verify_free_space,
@@ -88,6 +89,11 @@ DF_OK = (
 DF_LOW = (
     "Filesystem 1K-blocks Used Available Use% Mounted on\n"
     "/dev/fuse        512  384       128  75% /storage/emulated"
+)
+DF_TOO_FEW_COLUMNS = "Filesystem 1K-blocks\n/dev/fuse 100000000"
+DF_NON_NUMERIC_AVAILABLE = (
+    "Filesystem 1K-blocks Used Available Use% Mounted on\n"
+    "/dev/fuse  100000000 1000        N/A  1% /storage/emulated"
 )
 
 
@@ -455,6 +461,20 @@ def test_verify_free_space_unparseable():
         verify_free_space(Device(FakeRaw({"df -k": ("one line only", 0)})), 1)
 
 
+def test_verify_free_space_too_few_columns_raises_cannot_parse():
+    with pytest.raises(AdbError, match="Cannot parse"):
+        verify_free_space(
+            Device(FakeRaw({"df -k": (DF_TOO_FEW_COLUMNS, 0)})), 1
+        )
+
+
+def test_verify_free_space_non_numeric_available_raises_cannot_parse():
+    with pytest.raises(AdbError, match="Cannot parse"):
+        verify_free_space(
+            Device(FakeRaw({"df -k": (DF_NON_NUMERIC_AVAILABLE, 0)})), 1
+        )
+
+
 def test_verify_free_space_records_gauge_on_pass():
     raw = FakeRaw({"df -k": (DF_OK, 0)})
     verify_free_space(Device(raw), 1000)
@@ -722,6 +742,26 @@ def test_media_scan_propagates_broadcast_failure():
         _media_scan(Device(raw), ["/sdcard/DCIM/p1.jpg"])
 
 
+def test_post_work_wakes_scans_and_nudges_in_order():
+    raw = FakeRaw(
+        {
+            "dumpsys power": ("mWakefulness=Awake", 0),
+            "dumpsys window": ("mShowingLockscreen=false", 0),
+            "dumpsys user": ("mRunningUnlocked=true", 0),
+        }
+    )
+    post_work(Device(raw), ["/sdcard/DCIM/p1.jpg"])
+
+    unforce_i = next(
+        i for i, c in enumerate(raw.shell_calls) if "deviceidle unforce" in c
+    )
+    scan_i = next(
+        i for i, c in enumerate(raw.shell_calls) if "MEDIA_SCANNER_SCAN_FILE" in c
+    )
+    monkey_i = next(i for i, c in enumerate(raw.shell_calls) if "monkey" in c)
+    assert unforce_i < scan_i < monkey_i
+
+
 def test_interactive_true_only_on_affirmative_signals():
     raw = FakeRaw(
         {
@@ -741,6 +781,18 @@ def test_interactive_treats_unknown_keyguard_output_as_locked():
 
 def test_interactive_false_when_asleep_even_if_keyguard_clear():
     raw = FakeRaw({"dumpsys window": ("mShowingLockscreen=false", 0)})
+    assert _interactive(Device(raw)) is False
+
+
+def test_interactive_false_when_keyguard_explicitly_showing():
+    # An explicit "true" signal (not just an unrecognized/empty one) must
+    # also read as locked, even though the screen itself is awake.
+    raw = FakeRaw(
+        {
+            "dumpsys power": ("mWakefulness=Awake", 0),
+            "dumpsys window": ("mShowingLockscreen=true", 0),
+        }
+    )
     assert _interactive(Device(raw)) is False
 
 
