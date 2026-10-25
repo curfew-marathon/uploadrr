@@ -8,5 +8,9 @@ exclude = ["tests/test_adb.py"]
 ignore_missing_imports = true
 explicit_package_bases = true
 
+[[tool.mypy.overrides]]
+module = ["uploadrr.config", "uploadrr.metrics", "uploadrr.listener"]
+disallow_untyped_defs = true
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]

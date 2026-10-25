@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import logging
+from queue import Queue
 
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
@@ -76,12 +79,12 @@ DEVICE_CONNECTED = Gauge(
 )
 
 
-def bind_queue_depth(q):
+def bind_queue_depth(q: Queue[str]) -> None:
     """Wire the queue-depth gauge to `q.qsize()`. Called once from files.launch()."""
     QUEUE_DEPTH.set_function(q.qsize)
 
 
-def start(port):
+def start(port: str | int) -> None:
     """Start the metrics HTTP server. Never raises: an invalid port, a
     collision, or any other startup failure is logged and swallowed so a
     metrics problem can never take the daemon down."""
