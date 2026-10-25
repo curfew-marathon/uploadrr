@@ -6,7 +6,7 @@ import os
 import re
 import threading
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any
 
 from ppadb.client import Client as AdbClient
 from ppadb.sync import Sync
@@ -15,8 +15,6 @@ from uploadrr import constants as C
 from uploadrr import metrics
 
 logger = logging.getLogger(__name__)
-
-_T = TypeVar("_T")
 
 _CLIENT: AdbClient | None = None
 _RC_MARKER = "__UPLOADRR_RC__="
@@ -57,7 +55,7 @@ def _client() -> AdbClient:
     return _CLIENT
 
 
-def _call_client(fn: Callable[[AdbClient], _T], err_msg: str) -> _T:
+def _call_client[T](fn: Callable[[AdbClient], T], err_msg: str) -> T:
     """Call `fn(_client())`, converting any transport failure (socket
     timeout, adb server down, transport error) into AdbError with `err_msg`
     as the summary."""
