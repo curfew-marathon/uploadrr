@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import contextlib
 import logging
 import os
@@ -6,6 +8,7 @@ import shlex
 import tarfile
 import threading
 import time
+from typing import Any
 from urllib.parse import quote
 
 from ppadb.client import Client as AdbClient
@@ -16,7 +19,7 @@ from uploadrr import metrics
 
 logger = logging.getLogger(__name__)
 
-_CLIENT = None
+_CLIENT: AdbClient | None = None
 _RC_MARKER = "__UPLOADRR_RC__="
 _RC_RE = re.compile(re.escape(_RC_MARKER) + r"(\d+)\s*\Z")
 
@@ -29,14 +32,14 @@ class AdbError(OSError):
 class AdbCommandError(AdbError):
     """An on-device command exited non-zero (ppadb itself never raises for this)."""
 
-    def __init__(self, cmd, rc, output):
+    def __init__(self, cmd: str, rc: int, output: str) -> None:
         super().__init__(f"`{cmd}` exited {rc}: {output.strip()[:500]}")
         self.cmd = cmd
         self.rc = rc
         self.output = output
 
 
-def _client():
+def _client() -> AdbClient:
     """Return the module-wide adb-server client, creating it on first use.
 
     ppadb's host commands (``devices()``, ``device(serial)``) call
@@ -55,7 +58,7 @@ def _client():
     return _CLIENT
 
 
-def get_device(serial):
+def get_device(serial: str) -> Device:
     """Look up a connected device by serial, wrapped as a `Device`."""
     logger.debug("Connecting to device: %s", serial)
     try:
@@ -67,7 +70,7 @@ def get_device(serial):
     return Device(raw)
 
 
-def connected_serials():
+def connected_serials() -> set[str]:
     """Return the set of serials adb currently reports as connected and
     authorized (`adb devices` state "device") to the host adb server."""
     try:
@@ -81,11 +84,13 @@ class Device:
     """Thin wrapper over a ppadb device that adds per-call timeouts and turns
     non-zero shell exits and transport errors into exceptions."""
 
-    def __init__(self, raw):
+    def __init__(self, raw: Any) -> None:
         self._raw = raw
-        self.serial = raw.serial
+        self.serial: str = raw.serial
 
-    def sh(self, cmd, *, timeout=C.SHELL_TIMEOUT, check=True):
+    def sh(
+        self, cmd: str, *, timeout: float = C.SHELL_TIMEOUT, check: bool = True
+    ) -> str:
         """Run ``cmd`` on the device and return its combined output.
 
         Unlike ``ppadb``'s ``shell``, this raises ``AdbCommandError`` when the
@@ -99,9 +104,9 @@ class Device:
         ``try/finally`` that always closes it.
         """
         wrapped = f"{cmd}\necho {_RC_MARKER}$?"
-        raw_out = None
+        raw_out: str | None = None
 
-        def _read_and_close(conn):
+        def _read_and_close(conn: Any) -> None:
             nonlocal raw_out
             try:
                 raw_out = conn.read_all().decode("utf-8")
@@ -126,7 +131,7 @@ class Device:
             raise AdbCommandError(cmd, rc, body)
         return body
 
-    def push(self, src, dest, *, stall_timeout=None):
+    def push(self, src: str, dest: str, *, stall_timeout: float | None = None) -> None:
         """Push a local file over a Sync connection this call owns.
 
         ``ppadb``'s own ``push()`` has no timeout: a stalled transfer used to
@@ -144,7 +149,7 @@ class Device:
         total = os.path.getsize(src)
         overall = max(C.PUSH_TIMEOUT_FLOOR, total / C.PUSH_MIN_BYTES_PER_SEC)
 
-        conn = None
+        conn: Any = None
         try:
             conn = self._raw.sync()
             conn.socket.settimeout(stall_timeout)
@@ -159,9 +164,9 @@ class Device:
                 f"push {src} -> {self.serial}:{dest} could not start: {e}"
             ) from e
 
-        result = {"err": None}
+        result: dict[str, Exception | None] = {"err": None}
 
-        def _run():
+        def _run() -> None:
             try:
                 with conn:
                     Sync(conn).push(src, dest, Sync.DEFAULT_CHMOD, progress=None)
@@ -207,7 +212,7 @@ class Device:
         metrics.PUSH_BYTES_TOTAL.labels(serial=self.serial).inc(total)
 
 
-def _free_bytes(device):
+def _free_bytes(device: Device) -> int:
     """Return free space (bytes) on the device's camera storage, via `df -k`."""
     out = device.sh(f"df -k {shlex.quote(C.CAMERA)}")
     rows = [r for r in out.splitlines() if r.strip()]
@@ -221,7 +226,7 @@ def _free_bytes(device):
         raise AdbError(f"Cannot parse `df` row on {device.serial}: {rows[-1]!r}") from e
 
 
-def verify_free_space(device, file_size):
+def verify_free_space(device: Device, file_size: int) -> None:
     """Raise `AdbError` unless the device has roughly 3x `file_size` free."""
     logger.debug("Checking free space on device %s", device.serial)
     free = _free_bytes(device)
@@ -243,7 +248,7 @@ def verify_free_space(device, file_size):
     logger.debug("Device %s - storage check passed", device.serial)
 
 
-def _archive_members(path):
+def _archive_members(path: str) -> list[str]:
     """Validate a local tar archive and return its regular-file member names.
 
     Read locally rather than via the device's `tar -tf`, so link targets and
@@ -251,7 +256,7 @@ def _archive_members(path):
     a symlink member can point outside the extraction directory and pass a
     name-only check, then have later members extract through it.
     """
-    names = []
+    names: list[str] = []
     with tarfile.open(path) as tar:
         for member in tar.getmembers():
             parts = member.name.split("/")
@@ -268,7 +273,7 @@ def _archive_members(path):
     return names
 
 
-def push_file(serial, file):
+def push_file(serial: str, file: str) -> None:
     """Push, validate, and extract one archive on `serial`, then post-process."""
     logger.info("Starting transfer of %s to device %s", file, serial)
     names = _archive_members(file)  # validated locally before anything is pushed
@@ -347,7 +352,7 @@ def push_file(serial, file):
     logger.info("Successfully completed transfer to device %s", serial)
 
 
-def pre_work(device):
+def pre_work(device: Device) -> None:
     """Placeholder for pre-transfer device prep; currently a deliberate no-op.
 
     `am force-stop` was removed here: it aborts any in-progress Google Photos
@@ -357,7 +362,7 @@ def pre_work(device):
     logger.debug("pre_work: no-op for device %s", device.serial)
 
 
-def post_work(device, scanned_paths):
+def post_work(device: Device, scanned_paths: list[str]) -> None:
     """Wake/unlock the device, then trigger a media scan of the new files."""
     _ensure_interactive(device)
     # Leave Doze if a previous run (or a person) forced it.
@@ -370,7 +375,7 @@ def post_work(device, scanned_paths):
     )
 
 
-def _screen_awake(device):
+def _screen_awake(device: Device) -> bool:
     """True when `dumpsys power` reports the display is on."""
     power = device.sh(
         "dumpsys power | grep -E 'mWakefulness=|Display Power'", check=False
@@ -378,7 +383,7 @@ def _screen_awake(device):
     return "Awake" in power or "state=ON" in power
 
 
-def _keyguard_clear(device):
+def _keyguard_clear(device: Device) -> bool:
     """True only on an affirmative "no keyguard" signal from `dumpsys window`.
 
     Unrecognized or empty output (a failed pipe, a renamed field on a newer
@@ -396,12 +401,12 @@ def _keyguard_clear(device):
     return "false" in keyguard  # explicit "not showing"; unrecognized output -> False
 
 
-def _interactive(device):
+def _interactive(device: Device) -> bool:
     """True when the screen is confirmed awake and the keyguard confirmed down."""
     return _screen_awake(device) and _keyguard_clear(device)
 
 
-def _swipe_up(device):
+def _swipe_up(device: Device) -> None:
     """Swipe up from near the bottom of the screen to dismiss a keyguard."""
     size = device.sh("wm size", check=False)
     m = re.search(r"(\d+)x(\d+)", size)
@@ -412,7 +417,7 @@ def _swipe_up(device):
     )
 
 
-def _ensure_interactive(device, settle=1.5):
+def _ensure_interactive(device: Device, settle: float = 1.5) -> None:
     """The target device has no secure lock, but its keyguard state varies:
     sometimes already interactive, sometimes screen-off, sometimes a non-secure
     keyguard is showing, sometimes it needs a swipe. Escalate until a `dumpsys`
@@ -448,7 +453,7 @@ def _ensure_interactive(device, settle=1.5):
         )
 
 
-def _media_scan(device, paths, batch=40):
+def _media_scan(device: Device, paths: list[str], batch: int = 40) -> None:
     """Broadcast MEDIA_SCANNER_SCAN_FILE for each extracted path in batches."""
     if not paths:
         logger.debug("No extracted files to scan on device %s", device.serial)
