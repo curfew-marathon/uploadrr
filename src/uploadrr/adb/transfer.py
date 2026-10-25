@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import shlex
+from collections.abc import Callable
 
 from uploadrr import constants as C
 from uploadrr import metrics
@@ -24,6 +25,17 @@ def _free_bytes(device: Device) -> int:
         return int(cols[3]) * 1024  # "Available" column, 1K blocks
     except (IndexError, ValueError) as e:
         raise AdbError(f"Cannot parse `df` row on {device.serial}: {rows[-1]!r}") from e
+
+
+def _best_effort(fn: Callable[[], object], warn_msg: str) -> None:
+    """Run `fn`, converting AdbError into a logged warning instead of letting
+    it propagate - for cleanup/informational steps that must never mask the
+    real outcome of a push that already succeeded or already failed for
+    another reason. `warn_msg` takes a single %s placeholder for the error."""
+    try:
+        fn()
+    except AdbError as e:
+        logger.warning(warn_msg, e)
 
 
 def verify_free_space(device: Device, file_size: int) -> None:
@@ -94,31 +106,23 @@ def push_file(serial: str, file: str) -> None:
                     device.serial,
                 )
             finally:
-                try:
-                    device.sh(f"rm -f {q_dest}", check=True)
-                except AdbError as e:
-                    logger.warning(
-                        "Could not remove %s on device %s: %s",
-                        file_dest,
-                        device.serial,
-                        e,
-                    )
+                _best_effort(
+                    lambda: device.sh(f"rm -f {q_dest}", check=True),
+                    f"Could not remove {file_dest} on device {device.serial}: %s",
+                )
 
                 # Informational only: the transfer already succeeded, so a
                 # failure here must never mask that outcome. This is the
                 # number that matters for trending real device fullness - the
                 # pre-push read above is a conservative gate, not the
                 # post-transfer truth.
-                try:
-                    metrics.DEVICE_FREE_BYTES.labels(serial=device.serial).set(
+                _best_effort(
+                    lambda: metrics.DEVICE_FREE_BYTES.labels(serial=device.serial).set(
                         _free_bytes(device)
-                    )
-                except AdbError as e:
-                    logger.warning(
-                        "Could not read free space on device %s after cleanup: %s",
-                        device.serial,
-                        e,
-                    )
+                    ),
+                    f"Could not read free space on device {device.serial} "
+                    "after cleanup: %s",
+                )
 
             post_work(device, scanned)
     except AdbError:
