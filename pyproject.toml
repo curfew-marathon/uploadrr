@@ -23,5 +23,9 @@ disallow_untyped_defs = true
 module = "uploadrr.files"
 disallow_untyped_defs = true
 
+[[tool.mypy.overrides]]
+module = "uploadrr.scan"
+disallow_untyped_defs = true
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]

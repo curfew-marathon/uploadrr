@@ -1,101 +1,14 @@
-import os
-from queue import Empty, Queue
-from unittest.mock import MagicMock, patch
+from queue import Empty
+from unittest.mock import MagicMock
 
-from uploadrr import adb, files, metrics
-from uploadrr.files import add_files
+from uploadrr import adb, files, metrics, scan
 from uploadrr.listener import MonitorFolder
-
-
-def test_add_files(tmp_path):
-    queue = Queue()
-    (tmp_path / "test1.tar").write_text("data")
-    (tmp_path / "test2.txt").write_text("data")
-    os.mkdir(tmp_path / "subdir")
-
-    add_files(str(tmp_path), queue)
-    assert queue.get() == os.path.join(str(tmp_path), "test1.tar")
-    assert queue.empty()
-
-
-def test_add_files_not_found():
-    queue = Queue()
-    with patch("uploadrr.files.logger") as mock_logger:
-        add_files("/non-existent-path", queue)
-        mock_logger.warning.assert_called_with(
-            "Archive directory not found: %s", "/non-existent-path"
-        )
-        assert queue.empty()
-
-
-def test_count_pending_tars_counts_only_tar_files(tmp_path):
-    (tmp_path / "a.tar").write_text("data")
-    (tmp_path / "b.tar").write_text("data")
-    (tmp_path / "c.txt").write_text("data")
-    os.mkdir(tmp_path / "subdir.tar")  # a directory named *.tar must not count
-
-    assert files.count_pending_tars(str(tmp_path)) == 2
-
-
-def test_count_pending_tars_missing_dir_returns_zero():
-    assert files.count_pending_tars("/non-existent-path") == 0
-
-
-def test_add_files_logs_unresolvable_entry_type(tmp_path):
-    broken_link = tmp_path / "broken"
-    broken_link.symlink_to(tmp_path / "does-not-exist")
-    queue = Queue()
-
-    with patch("uploadrr.files.logger") as mock_logger:
-        add_files(str(tmp_path), queue)
-        mock_logger.warning.assert_any_call(
-            "Cannot resolve file type for: %s", str(broken_link)
-        )
-    assert queue.empty()
-
-
-def test_add_files_logs_debug_when_no_tars_found(tmp_path):
-    (tmp_path / "note.txt").write_text("data")
-    queue = Queue()
-
-    with patch("uploadrr.files.logger") as mock_logger:
-        add_files(str(tmp_path), queue)
-        mock_logger.debug.assert_any_call("No tar files found in %s", str(tmp_path))
-    assert queue.empty()
-
-
-def test_add_files_logs_error_on_permission_denied(monkeypatch):
-    def boom(path):
-        raise PermissionError("denied")
-
-    monkeypatch.setattr(files.os, "listdir", boom)
-    queue = Queue()
-
-    with patch("uploadrr.files.logger") as mock_logger:
-        add_files("/some/path", queue)
-        mock_logger.error.assert_called_once_with(
-            "Permission denied accessing directory: %s", "/some/path"
-        )
-    assert queue.empty()
-
-
-def test_add_files_logs_error_on_unexpected_listdir_failure(monkeypatch):
-    def boom(path):
-        raise NotADirectoryError("not a directory")
-
-    monkeypatch.setattr(files.os, "listdir", boom)
-    queue = Queue()
-
-    with patch("uploadrr.files.logger") as mock_logger:
-        add_files("/some/path", queue)
-        mock_logger.error.assert_called_once()
-    assert queue.empty()
 
 
 def test_process_pushes_then_removes_source_file(monkeypatch, tmp_path):
     fake_config = MagicMock()
     fake_config.get_serial.return_value = "serial123"
-    monkeypatch.setattr(files, "CONFIG", fake_config)
+    monkeypatch.setattr(scan, "CONFIG", fake_config)
     push_mock = MagicMock()
     monkeypatch.setattr(adb, "push_file", push_mock)
     tar_path = tmp_path / "x.tar"
@@ -112,7 +25,7 @@ def test_process_leaves_source_file_when_push_fails(monkeypatch, tmp_path):
     # source tar staying on disk for retry.
     fake_config = MagicMock()
     fake_config.get_serial.return_value = "serial123"
-    monkeypatch.setattr(files, "CONFIG", fake_config)
+    monkeypatch.setattr(scan, "CONFIG", fake_config)
     monkeypatch.setattr(
         adb, "push_file", MagicMock(side_effect=adb.AdbError("device unreachable"))
     )
@@ -127,36 +40,6 @@ def test_process_leaves_source_file_when_push_fails(monkeypatch, tmp_path):
     assert tar_path.exists()
 
 
-def test_files_backfill_scans_each_configured_directory():
-    fake_config = MagicMock()
-    fake_config.get_data.return_value = [
-        {"archive": "/archives/dev1"},
-        {"archive": "/archives/dev2"},
-    ]
-    calls = []
-
-    with (
-        patch("uploadrr.files.CONFIG", fake_config),
-        patch("uploadrr.files.add_files", lambda path, q: calls.append((path, q))),
-    ):
-        queue = Queue()
-        files.files_backfill(queue)
-
-    assert calls == [("/archives/dev1", queue), ("/archives/dev2", queue)]
-
-
-def test_add_files_sets_pending_tars_gauge(monkeypatch, tmp_path):
-    (tmp_path / "a.tar").write_text("data")
-    (tmp_path / "b.tar").write_text("data")
-    fake_config = MagicMock()
-    fake_config.get_serial.return_value = "test_serial"
-    monkeypatch.setattr(files, "CONFIG", fake_config)
-
-    add_files(str(tmp_path), Queue())
-
-    assert metrics.PENDING_TARS.labels(serial="test_serial")._value.get() == 2
-
-
 def _labeled(counter, **labels):
     return counter.labels(**labels)._value.get()
 
@@ -166,7 +49,7 @@ def _run_launch_once(monkeypatch, process_side_effect):
     loop the same way it always exits: a KeyboardInterrupt. Observer/backfill
     are stubbed so this doesn't touch the filesystem or start real threads."""
     monkeypatch.setattr(files, "Observer", lambda: MagicMock())
-    monkeypatch.setattr(files, "files_backfill", lambda q: q.put("test.tar"))
+    monkeypatch.setattr(scan, "files_backfill", lambda q: q.put("test.tar"))
     monkeypatch.setattr(files, "process", MagicMock(side_effect=process_side_effect))
     monkeypatch.setattr(files.time, "sleep", MagicMock(side_effect=KeyboardInterrupt))
     files.launch()
@@ -216,7 +99,7 @@ def test_launch_discards_processed_marker_after_success(monkeypatch):
 
     monkeypatch.setattr(files, "MonitorFolder", make_handler)
     monkeypatch.setattr(files, "Observer", lambda: MagicMock())
-    monkeypatch.setattr(files, "files_backfill", lambda q: q.put("test.tar"))
+    monkeypatch.setattr(scan, "files_backfill", lambda q: q.put("test.tar"))
     monkeypatch.setattr(files, "process", MagicMock(return_value=None))
     monkeypatch.setattr(files.time, "sleep", MagicMock(side_effect=KeyboardInterrupt))
 
@@ -234,9 +117,9 @@ def test_launch_updates_pending_tars_after_failed_process(monkeypatch, tmp_path)
     file_path = str(tmp_path / "test.tar")
     fake_config = MagicMock()
     fake_config.get_serial.return_value = "test_serial"
-    monkeypatch.setattr(files, "CONFIG", fake_config)
+    monkeypatch.setattr(scan, "CONFIG", fake_config)
     monkeypatch.setattr(files, "Observer", lambda: MagicMock())
-    monkeypatch.setattr(files, "files_backfill", lambda q: q.put(file_path))
+    monkeypatch.setattr(scan, "files_backfill", lambda q: q.put(file_path))
     monkeypatch.setattr(
         files, "process", MagicMock(side_effect=OSError("device unreachable"))
     )
@@ -257,13 +140,13 @@ def _run_launch_through_periodic_scan(monkeypatch):
     fake_queue.get.side_effect = [Empty(), KeyboardInterrupt()]
     monkeypatch.setattr(files, "Queue", lambda: fake_queue)
     monkeypatch.setattr(files, "Observer", lambda: MagicMock())
-    monkeypatch.setattr(files, "files_backfill", MagicMock())
+    monkeypatch.setattr(scan, "files_backfill", MagicMock())
     fake_config = MagicMock()
     fake_config.get_data.return_value = [
         {"serial": "connected_serial"},
         {"serial": "disconnected_serial"},
     ]
-    monkeypatch.setattr(files, "CONFIG", fake_config)
+    monkeypatch.setattr(scan, "CONFIG", fake_config)
 
 
 def test_launch_records_device_connectivity_on_periodic_scan(monkeypatch):
