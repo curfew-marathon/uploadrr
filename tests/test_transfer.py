@@ -117,6 +117,28 @@ def test_push_file_logs_warning_when_cleanup_fails(monkeypatch, tmp_path, caplog
     assert "Could not remove" in caplog.text
 
 
+def test_push_file_cleanup_warning_survives_percent_in_filename_and_serial(
+    monkeypatch, tmp_path, caplog
+):
+    # Regression: _best_effort used to interpolate file_dest/device.serial
+    # directly into the logging format-string template via an f-string, so a
+    # literal "%" in either (a perfectly valid filename or serial) would be
+    # misread as a format directive and crash the warning log instead of
+    # emitting it, swallowing the diagnostic entirely.
+    caplog.set_level(logging.WARNING)
+    tar = _make_tar(tmp_path, "100%.tar", [("p1.jpg", b"data")])
+    raw = FakeRaw({"df -k": (DF_OK, 0), "rm -f": ("Permission denied", 1)})
+    raw.serial = "serial%s"
+    monkeypatch.setattr("uploadrr.adb.transport.get_device", lambda s: Device(raw))
+    monkeypatch.setattr("uploadrr.adb.transfer.post_work", MagicMock())
+
+    push_file("test_serial", str(tar))  # must not raise a formatting error
+
+    assert "Could not remove" in caplog.text
+    assert "100%.tar" in caplog.text
+    assert "serial%s" in caplog.text
+
+
 def test_push_file_happy_path_scans_extracted_files(monkeypatch, tmp_path):
     tar = _make_tar(
         tmp_path, "c.tar", [("dir/p1.jpg", b"data1"), ("dir/p2.jpg", b"data2")]
@@ -186,6 +208,36 @@ def test_push_file_post_cleanup_free_space_read_failure_does_not_raise(
     push_file("test_serial", str(tar))  # must not raise
 
     assert "Could not read free space" in caplog.text
+
+
+def test_push_file_free_space_warning_survives_percent_in_serial(
+    monkeypatch, tmp_path, caplog
+):
+    # Same regression as the cleanup-warning case above, for the other
+    # _best_effort call site: device.serial is now a separate logging arg,
+    # not interpolated into the format-string template, so a literal "%" in
+    # the serial can't be misread as a format directive.
+    caplog.set_level(logging.WARNING)
+    tar = _make_tar(tmp_path, "k.tar", [("p1.jpg", b"data")])
+    raw = FakeRaw({"df -k": (DF_OK, 0)})
+    raw.serial = "serial%d"
+    monkeypatch.setattr("uploadrr.adb.transport.get_device", lambda s: Device(raw))
+    monkeypatch.setattr("uploadrr.adb.transfer.post_work", MagicMock())
+
+    calls = {"n": 0}
+
+    def flaky_free_bytes(device):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return 99999000 * 1024
+        raise AdbError("device offline")
+
+    monkeypatch.setattr("uploadrr.adb.transfer._free_bytes", flaky_free_bytes)
+
+    push_file("test_serial", str(tar))  # must not raise a formatting error
+
+    assert "Could not read free space" in caplog.text
+    assert "serial%d" in caplog.text
 
 
 def test_push_file_counts_failure_when_post_work_raises(monkeypatch, tmp_path):

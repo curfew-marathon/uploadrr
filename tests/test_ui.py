@@ -4,7 +4,12 @@ import pytest
 from conftest import FakeRaw
 
 from uploadrr.adb.transport import AdbCommandError, Device
-from uploadrr.adb.ui import _ensure_interactive, _interactive, _media_scan
+from uploadrr.adb.ui import (
+    _ensure_interactive,
+    _interactive,
+    _media_scan,
+    _warn_if_never_unlocked,
+)
 
 
 def test_media_scan_batches_and_joins_with_and():
@@ -108,14 +113,15 @@ def test_ensure_interactive_logs_info_when_awake_but_keyguard_unconfirmed(caplog
     assert all(r.levelno == logging.INFO for r in matches)
 
 
-def test_ensure_interactive_warns_on_fbe_locked(caplog):
+def test_warn_if_never_unlocked_warns_when_fbe_locked(caplog):
     caplog.set_level(logging.WARNING)
-    raw = FakeRaw(
-        {
-            "dumpsys power": ("mWakefulness=Awake", 0),
-            "dumpsys window": ("mShowingLockscreen=false", 0),
-            "dumpsys user": ("mRunningUnlocked=false", 0),
-        }
-    )
-    _ensure_interactive(Device(raw), settle=0)
+    raw = FakeRaw({"dumpsys user": ("mRunningUnlocked=false", 0)})
+    _warn_if_never_unlocked(Device(raw))
     assert "not been unlocked since boot" in caplog.text
+
+
+def test_warn_if_never_unlocked_silent_when_unlocked(caplog):
+    caplog.set_level(logging.WARNING)
+    raw = FakeRaw({"dumpsys user": ("mRunningUnlocked=true", 0)})
+    _warn_if_never_unlocked(Device(raw))
+    assert "not been unlocked since boot" not in caplog.text

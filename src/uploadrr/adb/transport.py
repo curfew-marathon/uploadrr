@@ -160,6 +160,23 @@ class Device:
                 f"push {src} -> {self.serial}:{dest} could not start: {e}"
             ) from e
 
+        worker, result = self._start_push_worker(conn, src, dest)
+        self._await_push_or_cancel(
+            worker, conn, overall, stall_timeout, result, src, dest
+        )
+
+        metrics.PUSH_BYTES_TOTAL.labels(serial=self.serial).inc(total)
+
+    def _start_push_worker(
+        self, conn: Any, src: str, dest: str
+    ) -> tuple[threading.Thread, dict[str, Exception | None]]:
+        """Start the background thread that owns `conn` for the data phase.
+
+        Returns the thread and the dict `_run` reports its exception into -
+        `push()` must still check `result["err"]` after awaiting/cancelling,
+        since a worker that finishes (rather than times out) can still have
+        failed.
+        """
         result: dict[str, Exception | None] = {"err": None}
 
         def _run() -> None:
@@ -173,6 +190,21 @@ class Device:
             target=_run, name=f"adb-push-{self.serial}", daemon=True
         )
         worker.start()
+        return worker, result
+
+    def _await_push_or_cancel(
+        self,
+        worker: threading.Thread,
+        conn: Any,
+        overall: float,
+        stall_timeout: float,
+        result: dict[str, Exception | None],
+        src: str,
+        dest: str,
+    ) -> None:
+        """Wait for the push worker, cancelling it on a stall/overall-deadline
+        timeout. Raises AdbError on either a timeout or a worker-reported
+        failure; returns normally only on a confirmed successful push."""
         worker.join(overall)
 
         if worker.is_alive():
@@ -204,5 +236,3 @@ class Device:
             raise AdbError(
                 f"push {src} -> {self.serial}:{dest} failed: {result['err']}"
             ) from result["err"]
-
-        metrics.PUSH_BYTES_TOTAL.labels(serial=self.serial).inc(total)

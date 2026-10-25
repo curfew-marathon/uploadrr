@@ -80,6 +80,12 @@ def _ensure_interactive(device: transport.Device, settle: float = 1.5) -> None:
                 device.serial,
             )
 
+
+def _warn_if_never_unlocked(device: transport.Device) -> None:
+    """Warn if the device hasn't been unlocked since boot (FBE) - Google
+    Photos backup won't run until it is manually unlocked once. Unrelated to
+    interactivity escalation; called separately from post_work(), right
+    after _ensure_interactive()."""
     running = device.sh("dumpsys user | grep -i 'RunningUnlocked'", check=False).lower()
     if "false" in running:
         logger.warning(

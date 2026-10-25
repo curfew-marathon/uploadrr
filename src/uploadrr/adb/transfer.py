@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import shlex
+from collections.abc import Callable
 
 from uploadrr import constants as C
 from uploadrr import metrics
@@ -24,6 +25,20 @@ def _free_bytes(device: Device) -> int:
         return int(cols[3]) * 1024  # "Available" column, 1K blocks
     except (IndexError, ValueError) as e:
         raise AdbError(f"Cannot parse `df` row on {device.serial}: {rows[-1]!r}") from e
+
+
+def _best_effort(fn: Callable[[], object], warn_msg: str, *warn_args: object) -> None:
+    """Run `fn`, converting AdbError into a logged warning instead of letting
+    it propagate - for cleanup/informational steps that must never mask the
+    real outcome of a push that already succeeded or already failed for
+    another reason. `warn_args` are passed as separate lazy logging args
+    (not interpolated into `warn_msg` by the caller), so a `%` in e.g. an
+    archive filename or device serial can't be misread as a format
+    directive. `warn_msg`'s final placeholder is always the caught error."""
+    try:
+        fn()
+    except AdbError as e:
+        logger.warning(warn_msg, *warn_args, e)
 
 
 def verify_free_space(device: Device, file_size: int) -> None:
@@ -94,31 +109,25 @@ def push_file(serial: str, file: str) -> None:
                     device.serial,
                 )
             finally:
-                try:
-                    device.sh(f"rm -f {q_dest}", check=True)
-                except AdbError as e:
-                    logger.warning(
-                        "Could not remove %s on device %s: %s",
-                        file_dest,
-                        device.serial,
-                        e,
-                    )
+                _best_effort(
+                    lambda: device.sh(f"rm -f {q_dest}", check=True),
+                    "Could not remove %s on device %s: %s",
+                    file_dest,
+                    device.serial,
+                )
 
                 # Informational only: the transfer already succeeded, so a
                 # failure here must never mask that outcome. This is the
                 # number that matters for trending real device fullness - the
                 # pre-push read above is a conservative gate, not the
                 # post-transfer truth.
-                try:
-                    metrics.DEVICE_FREE_BYTES.labels(serial=device.serial).set(
+                _best_effort(
+                    lambda: metrics.DEVICE_FREE_BYTES.labels(serial=device.serial).set(
                         _free_bytes(device)
-                    )
-                except AdbError as e:
-                    logger.warning(
-                        "Could not read free space on device %s after cleanup: %s",
-                        device.serial,
-                        e,
-                    )
+                    ),
+                    "Could not read free space on device %s after cleanup: %s",
+                    device.serial,
+                )
 
             post_work(device, scanned)
     except AdbError:
@@ -141,6 +150,7 @@ def pre_work(device: Device) -> None:
 def post_work(device: Device, scanned_paths: list[str]) -> None:
     """Wake/unlock the device, then trigger a media scan of the new files."""
     ui._ensure_interactive(device)
+    ui._warn_if_never_unlocked(device)
     # Leave Doze if a previous run (or a person) forced it.
     device.sh("dumpsys deviceidle unforce", check=False)
     ui._media_scan(device, scanned_paths)

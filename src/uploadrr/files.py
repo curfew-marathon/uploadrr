@@ -37,39 +37,7 @@ def launch() -> None:
                 f = queue.get(timeout=scan_interval)
                 logger.info("Processing new file: %s", f)
 
-                with metrics.FILE_PROCESSING_SECONDS.time():
-                    try:
-                        process(f)
-                        metrics.FILES_PROCESSED_TOTAL.labels(outcome="success").inc()
-                        logger.info("Successfully processed: %s", f)
-                        # Clean up tracking for successfully processed files
-                        if (
-                            hasattr(event_handler, "processed_files")
-                            and f in event_handler.processed_files
-                        ):
-                            event_handler.processed_files.discard(f)
-                    except KeyError:
-                        metrics.FILES_PROCESSED_TOTAL.labels(
-                            outcome="no_device_config"
-                        ).inc()
-                        logger.warning("No device configuration found for file: %s", f)
-                        # Don't delete file - might be a temporary config issue
-                    except OSError as e:
-                        metrics.FILES_PROCESSED_TOTAL.labels(outcome="os_error").inc()
-                        logger.error(
-                            "Failed to process %s: %s - file will remain for retry",
-                            f,
-                            str(e),
-                        )
-                        # Don't delete file - could be temporary storage/device issue
-                    except Exception as e:  # noqa: BLE001
-                        metrics.FILES_PROCESSED_TOTAL.labels(
-                            outcome="unexpected_error"
-                        ).inc()
-                        logger.error("Unexpected error processing %s: %s", f, str(e))
-                        # Don't delete file for unexpected errors
-
-                    _update_pending_tars(f)
+                _dispatch_outcome(f, event_handler)
 
                 logger.debug("Waiting 60 seconds before processing next file")
                 time.sleep(60)  # Delay for 1 minute (60 seconds).
@@ -91,6 +59,38 @@ def launch() -> None:
         observer.stop()
     observer.join()
     logger.info("Uploadrr stopped")
+
+
+def _dispatch_outcome(f: str, event_handler: MonitorFolder) -> None:
+    with metrics.FILE_PROCESSING_SECONDS.time():
+        try:
+            process(f)
+            metrics.FILES_PROCESSED_TOTAL.labels(outcome="success").inc()
+            logger.info("Successfully processed: %s", f)
+            # Clean up tracking for successfully processed files
+            if (
+                hasattr(event_handler, "processed_files")
+                and f in event_handler.processed_files
+            ):
+                event_handler.processed_files.discard(f)
+        except KeyError:
+            metrics.FILES_PROCESSED_TOTAL.labels(outcome="no_device_config").inc()
+            logger.warning("No device configuration found for file: %s", f)
+            # Don't delete file - might be a temporary config issue
+        except OSError as e:
+            metrics.FILES_PROCESSED_TOTAL.labels(outcome="os_error").inc()
+            logger.error(
+                "Failed to process %s: %s - file will remain for retry",
+                f,
+                str(e),
+            )
+            # Don't delete file - could be temporary storage/device issue
+        except Exception as e:  # noqa: BLE001
+            metrics.FILES_PROCESSED_TOTAL.labels(outcome="unexpected_error").inc()
+            logger.error("Unexpected error processing %s: %s", f, str(e))
+            # Don't delete file for unexpected errors
+
+        _update_pending_tars(f)
 
 
 def _update_pending_tars(f: str) -> None:
