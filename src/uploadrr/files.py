@@ -7,13 +7,10 @@ from queue import Empty, Queue
 
 from watchdog.observers import Observer
 
-from uploadrr import adb, metrics
-from uploadrr.config import Config
+from uploadrr import adb, metrics, scan
 from uploadrr.listener import MonitorFolder
 
 logger = logging.getLogger(__name__)
-
-CONFIG = Config()
 
 
 def launch() -> None:
@@ -22,9 +19,9 @@ def launch() -> None:
     metrics.bind_queue_depth(queue)
     event_handler = MonitorFolder(queue)
     observer = Observer()
-    observer.schedule(event_handler, path=CONFIG.get_archive(), recursive=True)
+    observer.schedule(event_handler, path=scan.CONFIG.get_archive(), recursive=True)
     logger.info("Processing any existing tar files in archive directories")
-    files_backfill(queue)
+    scan.files_backfill(queue)
     logger.info("File monitoring started - watching for new tar files")
     observer.start()
 
@@ -85,7 +82,7 @@ def launch() -> None:
                     "Queue timeout after 24 hours - performing periodic scan for unprocessed files"
                 )
                 logger.info("Last scan was %.1f hours ago", hours_since_scan)
-                files_backfill(queue)
+                scan.files_backfill(queue)
                 last_scan_time = current_time
                 _record_device_connectivity()
 
@@ -96,21 +93,6 @@ def launch() -> None:
     logger.info("Uploadrr stopped")
 
 
-def count_pending_tars(path: str) -> int:
-    """Count `.tar` files currently sitting in `path` (not subdirectories)."""
-    try:
-        entries = os.listdir(path)
-    except OSError:
-        # Can't read the directory right now; report 0 pending rather than
-        # raising, since this only feeds a metrics gauge, not an authoritative count.
-        return 0
-    return sum(
-        1
-        for entry in entries
-        if entry.endswith(".tar") and os.path.isfile(os.path.join(path, entry))
-    )
-
-
 def _update_pending_tars(f: str) -> None:
     """Recount on-disk backlog for `f`'s directory, independent of the
     in-memory queue: a failed attempt leaves the queue immediately but leaves
@@ -118,10 +100,10 @@ def _update_pending_tars(f: str) -> None:
     "tars arriving faster than we push" - queue depth alone would not."""
     d = os.path.dirname(f)
     try:
-        serial = CONFIG.get_serial(d)
+        serial = scan.CONFIG.get_serial(d)
     except KeyError:
         return  # no device config for this directory; nothing to label it with
-    metrics.PENDING_TARS.labels(serial=serial).set(count_pending_tars(d))
+    metrics.PENDING_TARS.labels(serial=serial).set(scan.count_pending_tars(d))
 
 
 def _record_device_connectivity() -> None:
@@ -132,7 +114,7 @@ def _record_device_connectivity() -> None:
     except adb.AdbError as e:
         logger.warning("Could not enumerate connected devices: %s", e)
         return
-    for d in CONFIG.get_data():
+    for d in scan.CONFIG.get_data():
         serial = d["serial"]
         metrics.DEVICE_CONNECTED.labels(serial=serial).set(
             1 if serial in connected else 0
@@ -142,55 +124,8 @@ def _record_device_connectivity() -> None:
 def process(f: str) -> None:
     d = os.path.dirname(f)
     logger.debug("Looking up device for directory: %s", d)
-    serial = CONFIG.get_serial(d)
+    serial = scan.CONFIG.get_serial(d)
     logger.debug("Found device %s for file %s", serial, f)
     adb.push_file(serial, f)
     logger.debug("Removing source file: %s", f)
     os.remove(f)
-
-
-def files_backfill(queue: Queue[str]) -> None:
-    for d in CONFIG.get_data():
-        add_files(d["archive"], queue)
-
-
-def add_files(path: str, queue: Queue[str]) -> None:
-    logger.debug("Scanning directory for existing tar files: %s", path)
-    try:
-        entries = os.listdir(path)
-        tar_count = 0
-        for file in entries:
-            f = os.path.join(path, file)
-            if os.path.isfile(f):
-                if file.endswith(".tar"):
-                    logger.info("Found existing tar file to process: %s", f)
-                    queue.put(f)
-                    tar_count += 1
-                else:
-                    logger.debug("Skipping non-tar file: %s", f)
-            elif os.path.isdir(f):
-                logger.debug("Skipping subdirectory: %s", f)
-            else:
-                logger.warning("Cannot resolve file type for: %s", f)
-
-        if tar_count > 0:
-            logger.info(
-                "Added %d tar files from %s to processing queue", tar_count, path
-            )
-        else:
-            logger.debug("No tar files found in %s", path)
-
-        try:
-            metrics.PENDING_TARS.labels(serial=CONFIG.get_serial(path)).set(tar_count)
-        except KeyError:
-            pass  # no device config for this directory; nothing to label it with
-
-    except FileNotFoundError:
-        logger.warning("Archive directory not found: %s", path)
-    except PermissionError:
-        logger.error("Permission denied accessing directory: %s", path)
-    except Exception as e:  # noqa: BLE001
-        # Deliberate catch-all beyond the two expected cases above: any other
-        # os.listdir/os.path.isfile failure on this directory should not crash
-        # the scan, it should just be logged and skipped.
-        logger.error("Error scanning directory %s: %s", path, str(e))
