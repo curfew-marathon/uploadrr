@@ -14,16 +14,35 @@ logger = logging.getLogger(__name__)
 
 
 def _free_bytes(device: Device) -> int:
-    """Return free space (bytes) on the device's camera storage, via `df -k`."""
+    """Return free space (bytes) on the device's camera storage, via `df -k`.
+
+    Looks up the "Available" column by name in the header row rather than
+    trusting a fixed index, and bounds-checks the data row before indexing -
+    self-documenting, and doesn't silently misread if a device's `df` ever
+    shifts column order or wraps a field onto its own line.
+    """
     out = device.sh(f"df -k {shlex.quote(C.CAMERA)}")
     rows = [r for r in out.splitlines() if r.strip()]
     if len(rows) < 2:
         raise AdbError(f"Unexpected `df` output on {device.serial}: {out!r}")
 
-    cols = rows[-1].split()
+    header_cols = rows[0].split()
     try:
-        return int(cols[3]) * C.BYTES_PER_KB  # "Available" column, 1K blocks
-    except (IndexError, ValueError) as e:
+        avail_idx = next(
+            i for i, name in enumerate(header_cols) if name.lower() == "available"
+        )
+    except StopIteration as e:
+        raise AdbError(
+            f"Cannot parse `df` header on {device.serial} "
+            f"(no 'Available' column): {rows[0]!r}"
+        ) from e
+
+    data_cols = rows[-1].split()
+    if len(data_cols) <= avail_idx:
+        raise AdbError(f"Cannot parse `df` row on {device.serial}: {rows[-1]!r}")
+    try:
+        return int(data_cols[avail_idx]) * C.BYTES_PER_KB  # 1K blocks
+    except ValueError as e:
         raise AdbError(f"Cannot parse `df` row on {device.serial}: {rows[-1]!r}") from e
 
 

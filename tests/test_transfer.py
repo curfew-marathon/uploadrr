@@ -3,9 +3,11 @@ from unittest.mock import MagicMock
 
 import pytest
 from conftest import (
+    DF_AVAILABLE_AT_NONSTANDARD_INDEX,
     DF_LOW,
     DF_NON_NUMERIC_AVAILABLE,
     DF_OK,
+    DF_ROW_SHORTER_THAN_AVAILABLE_COLUMN,
     DF_TOO_FEW_COLUMNS,
     FakeRaw,
     _histogram_count,
@@ -50,6 +52,31 @@ def test_verify_free_space_too_few_columns_raises_cannot_parse():
 def test_verify_free_space_non_numeric_available_raises_cannot_parse():
     with pytest.raises(AdbError, match="Cannot parse"):
         verify_free_space(Device(FakeRaw({"df -k": (DF_NON_NUMERIC_AVAILABLE, 0)})), 1)
+
+
+def test_verify_free_space_row_shorter_than_available_column_raises_cannot_parse():
+    # Hardening, not an observed-incident reproduction: the "Available"
+    # header is present, but the data row (e.g. a wrapped mount-source
+    # line) doesn't reach that column. The explicit bounds check added by
+    # this fix catches it deliberately, rather than relying on it
+    # incidentally raising IndexError the way the old fixed-index lookup
+    # happened to.
+    with pytest.raises(AdbError, match="Cannot parse"):
+        verify_free_space(
+            Device(FakeRaw({"df -k": (DF_ROW_SHORTER_THAN_AVAILABLE_COLUMN, 0)})), 1
+        )
+
+
+def test_verify_free_space_finds_available_column_regardless_of_position():
+    # Regression-guard for the header-based lookup itself: every other
+    # fixture happens to keep "Available" at column index 3, so none of
+    # them would catch a regression back to a hardcoded cols[3] lookup. This
+    # one puts "Available" at index 4 and asserts the exact byte value - the
+    # old fixed-index implementation would instead try to parse "1%" (the
+    # Use% column) as the value and raise, rather than reading 99999000.
+    raw = FakeRaw({"df -k": (DF_AVAILABLE_AT_NONSTANDARD_INDEX, 0)})
+    verify_free_space(Device(raw), 1000)
+    assert _labeled(metrics.DEVICE_FREE_BYTES, serial=raw.serial) == 99999000 * 1024
 
 
 def test_verify_free_space_records_gauge_on_pass():
