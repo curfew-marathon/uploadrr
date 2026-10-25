@@ -6,7 +6,7 @@ exclude = ["tests/test_adb.py"]
 
 [tool.mypy]
 ignore_missing_imports = true
-explicit_package_bases = true
+mypy_path = ["src"]
 
 [[tool.mypy.overrides]]
 module = ["uploadrr.config", "uploadrr.metrics", "uploadrr.listener"]
